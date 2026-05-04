@@ -22,6 +22,7 @@ import os
 import csv
 import re
 import numpy as np
+import functools
 
 import ctk
 import qt
@@ -36,7 +37,7 @@ from slicer import vtkMRMLSequenceBrowserNode
 from utils.Helper import SpinBox, Slider
 from utils.TrackLogic import TrackLogic
 from typing import List
-
+from slicer.util import arrayFromVolume, updateVolumeFromArray
 #
 # Track
 #
