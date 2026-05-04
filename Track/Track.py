@@ -2554,14 +2554,25 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       # remove the currentFrameInputBox value
       self.currentFrameInputBox.setSpecialValueText('')
       
-      self.logic.visualize(self.customParamNode.sequenceBrowserNode,
-                                 self.customParamNode.sequenceNode2DImages,
-                                 self.customParamNode.node3DSegmentationLabelMap,
-                                 self.customParamNode.sequenceNodeTransforms,
-                                 self.customParamNode.opacity,
-                                 self.customParamNode.overlayAsOutline,
-                                 self.customParamNode.overlayThickness,
-                                 customParamNode=self.customParamNode)
+      self.logic.visualize(
+                                  sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+                                  sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+                                  segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+                                  sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+                                  opacity=self.customParamNode.opacity,
+                                  overlayAsOutline=self.customParamNode.overlayAsOutline,
+                                  overlayThickness=self.customParamNode.overlayThickness,
+                                  show=False,
+                                  customParamNode=self.customParamNode,
+                                  deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+                                  transformType=self.transformTypeDropdown.currentText
+                              )
+            # Test: change view to center
+      layoutManager = slicer.app.layoutManager()
+      for name in layoutManager.sliceViewNames():
+          layoutManager.sliceWidget(name).fitSliceToBackground()
+      slicer.app.processEvents()
+
       # center 3D images on segmentation
       if self.customParamNode.sequenceNode2DImages.GetDataNodeAtValue("0").GetImageData().GetDataDimension() == 3:
         labelmap = slicer.mrmlScene.GetNodesByClass('vtkMRMLLabelMapVolumeNode').GetItemAsObject(0)
