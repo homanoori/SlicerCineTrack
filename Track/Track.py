@@ -91,6 +91,7 @@ class CustomParameterNode:
   overlayAsOutline: bool
   overlayColor: list[float] = [0.0, 1.0, 0.0] # [r, g, b] values from 0 to 1
   overlayThickness: int = 4
+  deformedMaskSequenceNode: vtkMRMLSequenceNode = None
 
 #
 # TrackWidget
@@ -116,6 +117,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.customParamNode = None
     self._updatingGUIFromParameterNode = False
     self.isDarkMode = None
+    self.labelColorButtons = {}
+
   def onColumnXSelectorChange(self):
     self.applyTransformButton.enabled = True
     self.transformationAppliedLabel.setVisible(False)
@@ -237,6 +240,56 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.selector3DSegmentation.setToolTip(tooltipText)    
     browseButton = self.selector3DSegmentation.findChildren(qt.QToolButton)[0]
     browseButton.setToolTip(tooltipText)
+
+    #  Dropdown: Transform Type 
+
+    self.transformTypeDropdown = qt.QComboBox()
+    self.transformTypeDropdown.addItems(["Translation", "Displacement Field"])
+    self.inputsFormLayout.addRow("Transform Type: ", self.transformTypeDropdown)
+
+    # when changed selection signal to run onTransformTypeChanged
+    self.transformTypeDropdown.currentTextChanged.connect(self.onTransformTypeChanged)
+
+
+    # Deformation field file Selector 
+
+    self.deformationFileSelector = ctk.ctkPathListWidget()
+    self.deformationFileSelector.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
+    self.deformationFileSelector.setMaximumHeight(100)
+    self.deformationFileSelector.setToolTip("Select one .h5/.hdf5 file for each cine image.")
+
+   
+    # Buttons to browse and delete deformation files
+    self.browseDeformationFilesButton = qt.QPushButton("...")
+    self.browseDeformationFilesButton.setFixedSize(qt.QSize(26, 21))
+    self.browseDeformationFilesButton.setToolTip("Browse and add deformation field files")
+    self.deleteDeformationFilesButton = qt.QPushButton("X")
+    self.deleteDeformationFilesButton.setFixedSize(qt.QSize(25, 25))
+    self.deleteDeformationFilesButton.setToolTip("Remove selected deformation field files")
+
+    # Button click functions 
+    self.browseDeformationFilesButton.clicked.connect(self.onBrowseDeformationFiles)
+    self.deleteDeformationFilesButton.clicked.connect(lambda: self.deformationFileSelector.clear())
+
+    # Layout for the deformation file selector + buttons
+    self.deformationFilesLayout = qt.QHBoxLayout()
+    self.deformationFilesLayout.setSpacing(0)
+    self.deformationFilesLayout.setContentsMargins(0, 0, 0, 2)
+    self.deformationFilesLayout.setAlignment(qt.Qt.AlignLeft)
+    self.deformationFilesLayout.addWidget(self.deformationFileSelector)
+    self.deformationFilesLayout.addWidget(self.browseDeformationFilesButton)
+    self.deformationFilesLayout.addWidget(self.deleteDeformationFilesButton)
+
+    self.inputsFormLayout.addRow("Deformation Field Files: ", self.deformationFilesLayout)
+    self.deformationFieldLabel = self.inputsFormLayout.labelForField(self.deformationFilesLayout)
+    self.deformationFileSelector.hide()
+    self.browseDeformationFilesButton.hide()
+    self.deleteDeformationFilesButton.hide()
+    self.deformationFieldLabel.hide()
+
+    self.transformTypeDropdown.currentTextChanged.connect(self.onTransformTypeChanged)
+
+
 
     # Transforms file selector + delete button
     self.selectorTransformsFile = ctk.ctkPathLineEdit()
