@@ -298,30 +298,34 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.inputsFormLayout.addRow('Translations: ',self.columnSelectorsLayout)
     
     # Layout for apply transformation button
-    self.applyTransformButton = qt.QPushButton("Apply Transformations")
+    # Apply / Status / Reset (same row)
+    self.applyTransformButton = qt.QPushButton("Apply")
     self.applyTransformButton.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
-    
+
     self.columnTransformsLayout = qt.QHBoxLayout()
+    self.columnTransformsLayout.setContentsMargins(0, 0, 0, 0)
+    self.columnTransformsLayout.setSpacing(6)
+
+    # Left: Apply
     self.columnTransformsLayout.addWidget(self.applyTransformButton)
-    self.inputsFormLayout.addRow(' ',self.columnTransformsLayout)
-    
-    # Playback speed label and spinbox
+
+    # Middle: status label
     self.transformationAppliedLabel = qt.QLabel("Transformation Applied")
     self.transformationAppliedLabel.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed)
     self.transformationAppliedLabel.setContentsMargins(20, 0, 10, 0)
     self.columnTransformsLayout.addWidget(self.transformationAppliedLabel)
-    
-    # Reset Button
+
+    # Push Reset to the far right
+    self.columnTransformsLayout.addStretch(1)
+
+    # Right: Reset
     self.resetButton = qt.QPushButton("Reset All")
     self.resetButton.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
-    self.resetButtonLayout = qt.QGridLayout()
-    self.resetButtonLayout.addWidget(self.resetButton)
-    # Spacer to separate transformation button and reset button
-    spacer = qt.QSpacerItem(10, 20, qt.QSizePolicy.Minimum, qt.QSizePolicy.Fixed)
-    self.inputsFormLayout.addItem(spacer)
-    self.inputsFormLayout.addRow('',self.resetButtonLayout)
-    
-    # self.inputsFormLayout.addRow(' ',self.applyTranformButton)    
+    self.columnTransformsLayout.addWidget(self.resetButton)
+
+    # One row on the form
+    self.inputsFormLayout.addRow('', self.columnTransformsLayout)
+   
 
     ## Sequence Area
 
