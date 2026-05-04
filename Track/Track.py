@@ -308,6 +308,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.selectorTransformsLayout.addWidget(self.selectorTransformsFile)
     self.selectorTransformsLayout.addWidget(self.deleteTransformsButton)
     self.inputsFormLayout.addRow("Transforms File: ", self.selectorTransformsLayout)
+    #assign label variable to call later :
+    self.transformsFileLabel = self.inputsFormLayout.labelForField(self.selectorTransformsLayout)
 
     tooltipText = "Insert a Transforms file. Valid filetypes: .csv, .xls, .xlsx"
     self.selectorTransformsFile.setToolTip(tooltipText)
@@ -350,7 +352,9 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.columnSelectorsLayout.addWidget(self.columnZSelector)
     
     self.inputsFormLayout.addRow('Translations: ',self.columnSelectorsLayout)
-    
+    #assign label variable to call later :
+    self.translationsLabel = self.inputsFormLayout.labelForField(self.columnSelectorsLayout)
+
     # Layout for apply transformation button
     # Apply / Status / Reset (same row)
     self.applyTransformButton = qt.QPushButton("Apply")
@@ -494,13 +498,20 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.controlLayout.addWidget(self.playbackSpeedBox)
     self.playbackSpeedBox.setToolTip("Modify playback speed using the arrows on the right.")
 
+    # Overlay collapsible section
+    overlayColoursCollapsibleButton = ctk.ctkCollapsibleButton()
+    overlayColoursCollapsibleButton.text = "Overlay"
+    overlayColoursCollapsibleButton.collapsed = False  # Open by default
+    self.layout.addWidget(overlayColoursCollapsibleButton)
+
+    self.overlayColoursFormLayout = qt.QFormLayout(overlayColoursCollapsibleButton)
     # Visual controls layout
     self.visualControlsWidget = qt.QWidget()
     self.visualControlsWidget.setMinimumHeight(30)
     self.visualControlsLayout = qt.QHBoxLayout()
     self.visualControlsLayout.setAlignment(qt.Qt.AlignLeft)
     self.visualControlsWidget.setLayout(self.visualControlsLayout)
-    self.sequenceFormLayout.addWidget(self.visualControlsWidget)
+    self.overlayColoursFormLayout.addWidget(self.visualControlsWidget)
 
     # Overlay outline label and checkbox
     self.outlineLabel = qt.QLabel("Outlined Overlay:")
@@ -540,18 +551,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.visualControlsLayout2 = qt.QHBoxLayout()
     self.visualControlsLayout2.setAlignment(qt.Qt.AlignLeft)
     self.visualControlsWidget2.setLayout(self.visualControlsLayout2)
-    self.sequenceFormLayout.addWidget(self.visualControlsWidget2)
-    
-    # Color picker for overlay
-    self.overlayColorLabel = qt.QLabel("Overlay Color:")
-    self.overlayColorLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
-    self.overlayColorLabel.setContentsMargins(0, 0, 8, 0)
-    self.visualControlsLayout2.addWidget(self.overlayColorLabel)
-
-    self.overlayColorButton = qt.QPushButton()
-    self.overlayColorButton.setStyleSheet("background-color: green;")
-    self.overlayColorButton.setFixedSize(24, 24)
-    self.visualControlsLayout2.addWidget(self.overlayColorButton)
+    self.overlayColoursFormLayout.addWidget(self.visualControlsWidget2)
 
     # Overlay thickness slider
     self.overlayThicknessLabel = qt.QLabel("Overlay Thickness:")
@@ -567,6 +567,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.overlayThicknessSlider.singleStep = 1
     self.overlayThicknessSlider.enabled = False
     self.visualControlsLayout2.addWidget(self.overlayThicknessSlider)
+
+    # Layout for color picker
+    self.overlayColoursLayout = qt.QGridLayout()
+    self.overlayColoursLayout.setVerticalSpacing(15)  # space between rows
+    self.overlayColoursLayout.setAlignment(qt.Qt.AlignLeft)
+    self.overlayColoursFormLayout.addRow(self.overlayColoursLayout)
 
 
     #
@@ -663,6 +669,62 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # Make sure parameter node is initialized (needed for module reload)
     self.initializeParameterNode()
+
+
+  def onTransformTypeChanged(self, value):
+    self.transformType = value
+
+
+    if value == "Displacement Field":
+        self.deformationFileSelector.show()
+        self.browseDeformationFilesButton.show()
+        self.deleteDeformationFilesButton.show()
+        self.deformationFieldLabel.show()
+
+        self.selectorTransformsFile.hide()
+        self.deleteTransformsButton.hide()
+        self.transformsFileLabel.hide()
+        
+
+        self.columnXSelector.hide()
+        self.columnXSelectorLabel.hide()
+        self.columnYSelector.hide()
+        self.columnYSelectorLabel.hide()
+        self.columnZSelector.hide()
+        self.columnZSelectorLabel.hide()
+        self.translationsLabel.hide()
+
+        
+    else:
+        self.deformationFileSelector.hide()
+        self.browseDeformationFilesButton.hide()
+        self.deleteDeformationFilesButton.hide()
+        self.deformationFieldLabel.hide()
+
+        self.selectorTransformsFile.show()
+        self.deleteTransformsButton.show()
+        self.transformsFileLabel.show()
+
+        self.columnXSelector.show()
+        self.columnXSelectorLabel.show()
+        self.columnYSelector.show()
+        self.columnYSelectorLabel.show()
+        self.columnZSelector.show()
+        self.columnZSelectorLabel.show()
+        self.translationsLabel.show()
+
+
+  def onBrowseDeformationFiles(self):
+      fileDialog = qt.QFileDialog()
+      fileDialog.setFileMode(qt.QFileDialog.ExistingFiles)
+      fileDialog.setNameFilter("Deformation Fields (*.h5 *.hdf5)")
+
+      if fileDialog.exec():
+          selectedFiles = fileDialog.selectedFiles()
+          selectedFiles = sorted(list(selectedFiles))
+          self.deformationFileSelector.addPaths(selectedFiles)
+          self.deformationFieldPaths = selectedFiles
+
 
   def cleanup(self):
     """
@@ -771,8 +833,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # True if the 2D images, transforms and 3D segmentation have been provided
     inputsProvided = self.customParamNode.sequenceNode2DImages and \
-                     self.customParamNode.sequenceNodeTransforms and \
-                     self.customParamNode.node3DSegmentation
+                 (self.customParamNode.sequenceNodeTransforms or self.customParamNode.deformedMaskSequenceNode) and \
+                 self.customParamNode.node3DSegmentation
 
     self.updatePlaybackButtons(inputsProvided)
 
@@ -784,14 +846,23 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.sequenceSlider.setValue(imageNum)
       self.currentFrameInputBox.setValue(imageNum)
       
-      self.logic.visualize(self.customParamNode.sequenceBrowserNode,
-                           self.customParamNode.sequenceNode2DImages,
-                           self.customParamNode.node3DSegmentationLabelMap,
-                           self.customParamNode.sequenceNodeTransforms,
-                           self.customParamNode.opacity,
-                           self.customParamNode.overlayAsOutline,
-                           self.customParamNode.overlayThickness,
-                           customParamNode=self.customParamNode)
+
+      # Trigger visualization with all current parameters
+      # Passes both standard transform and new deformation field settings
+      # transformType determines whether Translation or Displacement Field is used
+      self.logic.visualize(
+          sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+          sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+          segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+          sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+          opacity=self.customParamNode.opacity,
+          overlayAsOutline=self.customParamNode.overlayAsOutline,
+          overlayThickness=self.customParamNode.overlayThickness,
+          show=False,
+          customParamNode=self.customParamNode,
+          deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+          transformType=self.transformTypeDropdown.currentText
+      )
       self.editSliceView(imageDict)
                            
     elif not self.customParamNode.sequenceBrowserNode:
@@ -810,7 +881,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self._updatingGUIFromParameterNode = False
     
     # Disable the "Apply Transformation" button to assure the user the Transformation is applied
-    self.applyTransformButton.enabled = False
+    self.applyTransformButton.enabled = True
   def updateParameterNodeFromGUI(self, caller=None, event=None):
     """
     This method is called when the user makes any change in the GUI.
@@ -1159,32 +1230,64 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         segmentationNode = slicer.util.loadVolume(self.selector3DSegmentation.currentPath,
                                                   {"singleFile": True, "show": False})
         
-        # Check if Segmentation file is a binary mask
-        if np.unique(slicer.util.arrayFromVolume(segmentationNode)).size == 2:
-          self.logic.clearSliceForegrounds()
-          segmentationNode.SetName("3D Segmentation")
-          # Set a param to hold the 3D segmentation node ID
-          nodeID = shNode.GetItemByDataNode(segmentationNode)
-          self.customParamNode.node3DSegmentation = nodeID
+        # Check if Segmentation file has less than 30 values:
+        if np.unique(slicer.util.arrayFromVolume(segmentationNode)).size > 30:
+           slicer.util.warningDisplay("This file contains more than 30 unique values. ")
+        self.selector3DSegmentation.currentPath = ''
+           
+           
+  
+        # Get array from volume
+        segArray = arrayFromVolume(segmentationNode)
+        uniqueLabels = np.unique(segArray)
 
-          # Create a label map of the 3D segmentation that will be used to define the mask overlayed
-          # on the 2D images during playback
-          volumesModuleLogic = slicer.modules.volumes.logic()
-          segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode',
-                                                                    "3D Segmentation Label Map")
-          volumesModuleLogic.CreateLabelVolumeFromVolume(slicer.mrmlScene, segmentationLabelMap,
-                                                        segmentationNode)
-          # Set a param to hold the 3D segmentation label map ID
-          labelMapID = shNode.GetItemByDataNode(segmentationLabelMap)
-          self.customParamNode.node3DSegmentationLabelMap = labelMapID
-        else:
-          # If the segmentation file is not binary, remove the nodes created
-          slicer.util.warningDisplay("The segmentation file is not binary. The file was not loaded into 3D Slicer.", "Input Error")
-          slicer.mrmlScene.RemoveNode(segmentationNode)
-          self.customParamNode.node3DSegmentation = 0
-          self.customParamNode.node3DSegmentationLabelMap = 0
-          self.selector3DSegmentation.currentPath = ''
-          self.customParamNode.path3DSegmentation = ''
+        # Check for multi-label (more than just 0 and 1)
+        nonZeroLabels = uniqueLabels[uniqueLabels != 0]
+
+        if len(nonZeroLabels) > 1:
+            # Remap to consecutive label values (e.g., 1, 2, 3, ...)
+            remapDict = {label: i+1 for i, label in enumerate(nonZeroLabels)}
+            for oldVal, newVal in remapDict.items():
+                
+                segArray[segArray == oldVal] = newVal
+
+            # Push updated array back into the segmentation node
+            updateVolumeFromArray(segmentationNode, segArray)
+
+        #  Debug: Check what label values actually exist
+        segArray = arrayFromVolume(segmentationNode)
+        uniqueLabels = np.unique(segArray)
+        
+        for val in uniqueLabels:
+            count = np.sum(segArray == val)
+
+
+
+        remappedLabels = list(range(1, len(nonZeroLabels) + 1))
+        self.addAdditionalOverlayColorButtons(remappedLabels, segmentationNode)
+
+        # Continue with existing logic
+        self.logic.clearSliceForegrounds()
+        segmentationNode.SetName("3D Segmentation")
+        # Set a param to hold the 3D segmentation node ID
+        nodeID = shNode.GetItemByDataNode(segmentationNode)
+        self.customParamNode.node3DSegmentation = nodeID
+
+        # Create a label map of the 3D segmentation that will be used to define the mask overlayed
+        # on the 2D images during playback
+        volumesModuleLogic = slicer.modules.volumes.logic()
+        segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', "3D Segmentation Label Map")
+        volumesModuleLogic.CreateLabelVolumeFromVolume(slicer.mrmlScene, segmentationLabelMap, segmentationNode)
+
+        # Set a param to hold the 3D segmentation label map ID
+        labelMapID = shNode.GetItemByDataNode(segmentationLabelMap)
+        self.customParamNode.node3DSegmentationLabelMap = labelMapID
+        
+        
+        # Apply any pending colors that were stored before the label map was created
+        self.applyPendingLabelColors()
+
+
       else:
         # Remove filepath for the Segmentation File in the `Inputs` section
         self.customParamNode.path3DSegmentation = ''
