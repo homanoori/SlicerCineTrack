@@ -1630,6 +1630,381 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.customParamNode.sequenceBrowserNode.SetPlaybackRateFps(self.customParamNode.fps/2)
       self.customParamNode.sequenceBrowserNode.SetPlaybackActive(True)
 
+  def applyInitialColorToLabel(self, labelValue, colorHex, segmentationNode):
+    """Apply an initial color to a specific label in the color table"""
+   
+    
+    # Convert hex color to RGB values (0-1 range)
+    color = qt.QColor(colorHex)
+    r = color.red() / 255.0
+    g = color.green() / 255.0
+    b = color.blue() / 255.0
+    
+    
+    # Check if the label map has been created yet
+    if not hasattr(self.customParamNode, 'node3DSegmentationLabelMap') or not self.customParamNode.node3DSegmentationLabelMap:
+   
+        # Store the color to apply later when the label map is created
+        if not hasattr(self, 'pendingLabelColors'):
+            self.pendingLabelColors = {}
+        self.pendingLabelColors[labelValue] = (r, g, b)
+        return
+    
+    # Get the label map node that's actually being displayed
+    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+    labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
+    
+    if not labelMapNode:
+        
+        # Store the color to apply later
+        if not hasattr(self, 'pendingLabelColors'):
+            self.pendingLabelColors = {}
+        self.pendingLabelColors[labelValue] = (r, g, b)
+        return
+        
+    displayNode = labelMapNode.GetDisplayNode()
+    
+    if displayNode:
+        colorNode = displayNode.GetColorNode()
+
+        # Clone the color node if it's not editable
+        if colorNode.GetType() != slicer.vtkMRMLColorTableNode.User:
+  
+
+            colorNodeCopy = slicer.vtkMRMLColorTableNode()
+            colorNodeCopy.SetTypeToUser()
+
+            originalCount = colorNode.GetNumberOfColors()
+            colorNodeCopy.SetNumberOfColors(originalCount)
+
+            for i in range(originalCount):
+                rgba = [0, 0, 0, 0]
+                colorNode.GetColor(i, rgba)
+                colorNodeCopy.SetColor(i, f"Label {i}", *rgba)
+
+            slicer.mrmlScene.AddNode(colorNodeCopy)
+            displayNode.SetAndObserveColorNodeID(colorNodeCopy.GetID())
+            colorNode = colorNodeCopy
+
+        # Ensure color table is big enough
+        if labelValue >= colorNode.GetNumberOfColors():
+            colorNode.SetNumberOfColors(labelValue + 1)
+
+        # Set the initial color
+        colorNode.SetColor(labelValue, f"Label {labelValue}", r, g, b, 1.0)
+  
+
+        # Force apply the color table to the display node
+        displayNode.SetAndObserveColorNodeID(colorNode.GetID())
+        displayNode.Modified()
+        colorNode.Modified()
+
+  def applyPendingLabelColors(self):
+    """Apply any colors that were stored before the label map was created"""
+    if not hasattr(self, 'pendingLabelColors') or not self.pendingLabelColors:
+        return
+        
+    
+    # Get the label map node
+    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+    labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
+    
+    if not labelMapNode:
+       return
+        
+    displayNode = labelMapNode.GetDisplayNode()
+    if not displayNode:
+        return
+        
+    colorNode = displayNode.GetColorNode()
+
+    # Clone the color node if it's not editable
+    if colorNode.GetType() != slicer.vtkMRMLColorTableNode.User:
+
+        colorNodeCopy = slicer.vtkMRMLColorTableNode()
+        colorNodeCopy.SetTypeToUser()
+
+        originalCount = colorNode.GetNumberOfColors()
+        colorNodeCopy.SetNumberOfColors(originalCount)
+
+        for i in range(originalCount):
+            rgba = [0, 0, 0, 0]
+            colorNode.GetColor(i, rgba)
+            colorNodeCopy.SetColor(i, f"Label {i}", *rgba)
+
+        slicer.mrmlScene.AddNode(colorNodeCopy)
+        displayNode.SetAndObserveColorNodeID(colorNodeCopy.GetID())
+        colorNode = colorNodeCopy
+
+    # Apply all pending colors
+    maxLabel = max(self.pendingLabelColors.keys()) if self.pendingLabelColors else 0
+    if maxLabel >= colorNode.GetNumberOfColors():
+        colorNode.SetNumberOfColors(maxLabel + 1)
+
+    for labelValue, (r, g, b) in self.pendingLabelColors.items():
+
+        colorNode.SetColor(labelValue, f"Label {labelValue}", r, g, b, 1.0)
+
+    # Force apply the color table to the display node
+    
+    displayNode.Modified()
+    colorNode.Modified()
+    
+    # Clear the pending colors since they've been applied
+    self.pendingLabelColors = {}
+
+
+  def changeLabelColor(self, labelValue, segmentationNode, checked=None):
+    currentColor = qt.QColor(0, 179, 0)
+
+    colorDialog = qt.QColorDialog()
+    colorDialog.setCurrentColor(currentColor)
+    colorDialog.setOption(qt.QColorDialog.ShowAlphaChannel, False)
+
+    if colorDialog.exec_() == qt.QDialog.Accepted:
+        selected = colorDialog.selectedColor()
+        if selected.isValid():
+            rgb = [selected.redF(), selected.greenF(), selected.blueF()]
+
+            button = self.labelColorButtons.get(labelValue)
+            if button:
+                button.setStyleSheet(f"background-color: {selected.name()};")
+
+            # Get the label map node actually being displayed
+            shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+            labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
+            displayNode = labelMapNode.GetDisplayNode()
+
+            if displayNode:
+                colorNode = displayNode.GetColorNode()
+
+                # Clone color node if not editable
+                if colorNode.GetType() != slicer.vtkMRMLColorTableNode.User:
+                    colorNodeCopy = slicer.vtkMRMLColorTableNode()
+                    colorNodeCopy.SetTypeToUser()
+
+                    originalCount = colorNode.GetNumberOfColors()
+                    colorNodeCopy.SetNumberOfColors(originalCount)
+
+                    for i in range(originalCount):
+                        rgba = [0, 0, 0, 0]
+                        colorNode.GetColor(i, rgba)
+                        colorNodeCopy.SetColor(i, f"Label {i}", *rgba)
+
+                    slicer.mrmlScene.AddNode(colorNodeCopy)
+                    displayNode.SetAndObserveColorNodeID(colorNodeCopy.GetID())
+                    colorNode = colorNodeCopy
+
+                # Ensure color table is big enough
+                if labelValue >= colorNode.GetNumberOfColors():
+                    colorNode.SetNumberOfColors(labelValue + 1)
+
+                # Set the new color
+                colorNode.SetColor(labelValue, f"Label {labelValue}", *rgb, 1.0)
+
+                displayNode.SetAndObserveColorNodeID(colorNode.GetID())
+
+
+
+                # Update nodes
+                colorNode.Modified()
+                displayNode.Modified()
+                segmentationNode.Modified()
+
+                # Refresh all slice views
+                layoutManager = slicer.app.layoutManager()
+                for sliceViewName in layoutManager.sliceViewNames():
+                    sliceWidget = layoutManager.sliceWidget(sliceViewName)
+                    if sliceWidget:
+                        sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+                        if sliceCompositeNode and sliceCompositeNode.GetLabelVolumeID() == labelMapNode.GetID():
+                            oldLabelVolumeID = sliceCompositeNode.GetLabelVolumeID()
+                            sliceCompositeNode.SetLabelVolumeID(None)
+                            sliceCompositeNode.SetLabelVolumeID(oldLabelVolumeID)
+                            sliceCompositeNode.Modified()
+
+                # --- Fix: Update existing 3D rendering transfer functions to match new label colors ---
+                volumeRenderingLogic = slicer.modules.volumerendering.logic()
+                volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(labelMapNode)
+
+                if volumeRenderingDisplayNode:
+                    volumePropertyNode = volumeRenderingDisplayNode.GetVolumePropertyNode()
+                    if volumePropertyNode:
+                        # Create new transfer functions
+                        ctf = vtk.vtkColorTransferFunction()
+                        otf = vtk.vtkPiecewiseFunction()
+                        gtf = vtk.vtkPiecewiseFunction()  # Gradient opacity
+
+                        # Get unique labels from the volume to know which labels actually exist
+                        labelArray = slicer.util.arrayFromVolume(labelMapNode)
+                        uniqueLabels = np.unique(labelArray)
+                        
+                        # Add background (transparent)
+                        ctf.AddRGBPoint(0, 0.0, 0.0, 0.0)  # black background
+                        otf.AddPoint(0, 0.0)  # completely transparent background
+                        gtf.AddPoint(0, 1.0)  # no gradient opacity effect for background
+                        
+                        for label in uniqueLabels:
+                            # Skip background (label 0) - already handled above
+                            if label == 0:
+                                continue
+                                
+                            labelInt = int(label)
+                            if labelInt < colorNode.GetNumberOfColors():
+                                rgba = [0, 0, 0, 0]
+                                colorNode.GetColor(labelInt, rgba)
+                                # Add color for this label
+                                ctf.AddRGBPoint(label, rgba[0], rgba[1], rgba[2])
+                                # Set full opacity for solid rendering
+                                otf.AddPoint(label, self.customParamNode.opacity)
+                                # Gradient opacity - set to 1.0 for solid rendering
+                                gtf.AddPoint(label, 1.0)
+                            else:
+                                # Use default color if not in color table
+                                ctf.AddRGBPoint(label, 1.0, 1.0, 1.0)  # white
+                                otf.AddPoint(label, self.customParamNode.opacity)
+                                gtf.AddPoint(label, 1.0)
+
+                        # Apply transfer functions to volume rendering
+                        volumePropertyNode.SetColor(ctf)
+                        volumePropertyNode.SetScalarOpacity(otf)
+                        volumePropertyNode.SetGradientOpacity(gtf)
+                        
+                        # Ensure solid rendering settings
+                        volumePropertyNode.SetInterpolationTypeToLinear()
+                        volumePropertyNode.ShadeOn()  # Enable shading for better 3D appearance
+                        volumePropertyNode.SetAmbient(0.3)
+                        volumePropertyNode.SetDiffuse(0.7)
+                        volumePropertyNode.SetSpecular(0.2)
+
+                        volumePropertyNode.Modified()
+                        volumeRenderingDisplayNode.Modified()
+                else:
+                    # Create volume rendering if it doesn't exist
+                    volumeRenderingDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(labelMapNode)
+                    if volumeRenderingDisplayNode:
+                        # Apply the same settings as above for new volume rendering node
+                        volumePropertyNode = volumeRenderingDisplayNode.GetVolumePropertyNode()
+                        if volumePropertyNode:
+                            ctf = vtk.vtkColorTransferFunction()
+                            otf = vtk.vtkPiecewiseFunction()
+                            gtf = vtk.vtkPiecewiseFunction()
+
+                            labelArray = slicer.util.arrayFromVolume(labelMapNode)
+                            uniqueLabels = np.unique(labelArray)
+                            
+                            ctf.AddRGBPoint(0, 0.0, 0.0, 0.0)
+                            otf.AddPoint(0, 0.0)
+                            gtf.AddPoint(0, 1.0)
+                            
+                            for label in uniqueLabels:
+                                if label == 0:
+                                    continue
+                                    
+                                labelInt = int(label)
+                                if labelInt < colorNode.GetNumberOfColors():
+                                    rgba = [0, 0, 0, 0]
+                                    colorNode.GetColor(labelInt, rgba)
+                                    ctf.AddRGBPoint(label, rgba[0], rgba[1], rgba[2])
+                                    otf.AddPoint(label, self.customParamNode.opacity)
+                                    gtf.AddPoint(label, 1.0)
+                                else:
+                                    ctf.AddRGBPoint(label, 1.0, 1.0, 1.0)
+                                    otf.AddPoint(label, self.customParamNode.opacity)
+                                    gtf.AddPoint(label, 1.0)
+
+                            volumePropertyNode.SetColor(ctf)
+                            volumePropertyNode.SetScalarOpacity(otf)
+                            volumePropertyNode.SetGradientOpacity(gtf)
+                            volumePropertyNode.SetInterpolationTypeToLinear()
+                            volumePropertyNode.ShadeOn()
+                            volumePropertyNode.SetAmbient(0.3)
+                            volumePropertyNode.SetDiffuse(0.7)
+                            volumePropertyNode.SetSpecular(0.2)
+
+                            volumePropertyNode.Modified()
+                            volumeRenderingDisplayNode.Modified()
+                        
+                        # Make sure volume rendering is visible
+                        volumeRenderingDisplayNode.SetVisibility(True)
+
+                # Force render updates
+                slicer.util.forceRenderAllViews()
+                labelMapNode.Modified()
+
+
+
+
+
+  def addAdditionalOverlayColorButtons(self, labelValues, segmentationNode):
+    # Initialize the labelColorButtons dictionary if it doesn't exist
+    if not hasattr(self, 'labelColorButtons'):
+        self.labelColorButtons = {}
+    
+    # Define unique colors for each label
+    predefinedColors = [
+        "#00B300",  # Green (label 1)
+        "#FF4500",  # Red-Orange (label 2)
+        "#1E90FF",  # Dodger Blue (label 3)
+        "#FFD700",  # Gold (label 4)
+        "#FF1493",  # Deep Pink (label 5)
+        "#ADFF2F",  # Green Yellow (label 6)
+        "#B8860B",  # Dark Goldenrod (label 7)
+        "#FF6347",  # Tomato (label 8)
+        "#40E0D0",  # Turquoise (label 9)
+        "#8A2BE2",  # Blue Violet (label 10)
+        "#DC143C",  # Crimson (label 11)
+        "#7CFC00",  # Lawn Green (label 12)
+        "#20B2AA",  # Light Sea Green (label 13)
+        "#FF8C00",  # Dark Orange (label 14)
+        "#C71585",  # Medium Violet Red (label 15)
+        "#4682B4",  # Steel Blue (label 16)
+        "#D2691E",  # Chocolate (label 17)
+        "#9ACD32",  # Yellow Green (label 18)
+        "#BA55D3",  # Medium Orchid (label 19)
+        "#00CED1",  # Dark Turquoise (label 20)
+        "#FF69B4",  # Hot Pink (label 21)
+        "#556B2F",  # Dark Olive Green (label 22)
+        "#5F9EA0",  # Cadet Blue (label 23)
+        "#A0522D",  # Sienna (label 24)
+        "#6A5ACD",  # Slate Blue (label 25)
+        "#00FA9A",  # Medium Spring Green (label 26)
+        "#FFB6C1",  # Light Pink (label 27)
+        "#9932CC",  # Dark Orchid (label 28)
+        "#FA8072",  # Salmon (label 29)
+        "#2E8B57",  # Sea Green (label 30)        
+
+    ]
+    
+    
+    
+    for label in labelValues:
+        
+        i = label - 1  # index for layout math
+        row = i // 5 # 5 buttons per row
+        col = (i % 5) * 2  # label and button side by side
+
+        labelText = qt.QLabel(f"Label {label} Color:")
+        labelText.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
+        self.overlayColoursLayout.addWidget(labelText, row, col)
+
+        button = qt.QPushButton()
+        button.setFixedSize(24, 24)
+        
+        # Assign unique color based on label index
+        colorIndex = (label - 1) % len(predefinedColors)
+        color = predefinedColors[colorIndex]
+        button.setStyleSheet(f"background-color: {color};")
+        
+        button.clicked.connect(functools.partial(self.changeLabelColor, label, segmentationNode))
+        self.overlayColoursLayout.addWidget(button, row, col + 1)
+
+        self.labelColorButtons[label] = button
+        
+        # Apply this color to the color table immediately
+        self.applyInitialColorToLabel(label, color, segmentationNode)
+
+
   def onStopButton(self):
     """
     Stop the playback, after the current image's visualization completes.
