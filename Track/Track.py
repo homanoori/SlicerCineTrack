@@ -2093,58 +2093,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     displayNode = labelMapNode.GetDisplayNode()
     displayNode.SetSliceIntersectionThickness(self.customParamNode.overlayThickness)
 
-  def onOverlayColorPicker(self):
-    currentColor = qt.QColor()
-    currentColor.setRgbF(*self.customParamNode.overlayColor)
-
-    # Open color dialog with the currently selected color
-    colorDialog = qt.QColorDialog()
-    colorDialog.setCurrentColor(currentColor)
-    colorDialog.setOption(qt.QColorDialog.ShowAlphaChannel, False)
-
-    if colorDialog.exec_() == qt.QDialog.Accepted:
-      color = colorDialog.selectedColor()
-      if color.isValid():
-        self.overlayColorButton.setStyleSheet(f"background-color: {color.name()};")
-        self.customParamNode.overlayColor = [color.redF(), color.greenF(), color.blueF()]
-
-        # Update segmentation node color
-        if self.customParamNode.node3DSegmentation:
-          segmentationNode = slicer.mrmlScene.GetNodeByID(str(self.customParamNode.node3DSegmentation))
-          if segmentationNode:
-            displayNode = segmentationNode.GetDisplayNode()
-            if displayNode:
-              # Update color for all segments
-              for segmentIndex in range(segmentationNode.GetSegmentation().GetNumberOfSegments()):
-                displayNode.SetSegmentColor(segmentIndex, *self.customParamNode.overlayColor)
-
-        # Update 3D view colour
-        volumeRenderingDisplayNodes = slicer.util.getNodesByClass("vtkMRMLVolumeRenderingDisplayNode")
-        for vrDisplayNode in volumeRenderingDisplayNodes:
-          volumeProperty = vrDisplayNode.GetVolumePropertyNode()
-          if volumeProperty:
-            colorTransferFunction = volumeProperty.GetColor()
-            if colorTransferFunction:
-              colorTransferFunction.RemoveAllPoints()
-              colorTransferFunction.AddRGBPoint(0, 0, 0, 0)
-              colorTransferFunction.AddRGBPoint(1, *self.customParamNode.overlayColor)
-
-        # Update all views
-        if self.customParamNode.sequenceBrowserNode:
-          currentItemNumber = self.customParamNode.sequenceBrowserNode.GetSelectedItemNumber()
-          self.logic.visualize(self.customParamNode.sequenceBrowserNode,
-                               self.customParamNode.sequenceNode2DImages,
-                               self.customParamNode.node3DSegmentationLabelMap,
-                               self.customParamNode.sequenceNodeTransforms,
-                               self.customParamNode.opacity,
-                               self.customParamNode.overlayAsOutline,
-                               self.customParamNode.overlayThickness,
-                               customParamNode=self.customParamNode,
-                               )
-          self.customParamNode.sequenceBrowserNode.SetSelectedItemNumber(currentItemNumber)
-
-        # Final render to ensure all changes are visible
-        slicer.util.forceRenderAllViews()
 
   def onViewMoreClicked(self):
     # Opens up a dialog displaying selected files when the user clicks "View More"
