@@ -2278,15 +2278,19 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.customParamNode.sequenceBrowserNode.SelectNextItem()
     self.sequenceSlider.setValue(self.customParamNode.sequenceBrowserNode.GetSelectedItemNumber() + 1)
     self.currentFrameInputBox.setValue(self.sequenceSlider.value)
-    self.logic.visualize(self.customParamNode.sequenceBrowserNode,
-                           self.customParamNode.sequenceNode2DImages,
-                           self.customParamNode.node3DSegmentationLabelMap,
-                           self.customParamNode.sequenceNodeTransforms,
-                           self.customParamNode.opacity,
-                           self.customParamNode.overlayAsOutline,
-                           self.customParamNode.overlayThickness,
-                           True, # True to indicate that current alignment should be displayed
-                           customParamNode=self.customParamNode)
+    self.logic.visualize(
+        sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+        sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+        segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+        sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+        opacity=self.customParamNode.opacity,
+        overlayAsOutline=self.customParamNode.overlayAsOutline,
+        overlayThickness=self.customParamNode.overlayThickness,
+        show=False,
+        customParamNode=self.customParamNode,
+        deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+        transformType=self.transformTypeDropdown.currentText
+    )
     self.editSliceView(imageDict)
 
   def onDecrement(self):
@@ -2297,16 +2301,21 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.customParamNode.sequenceBrowserNode.SelectNextItem(-1)
     self.sequenceSlider.setValue(self.customParamNode.sequenceBrowserNode.GetSelectedItemNumber() + 1)
     self.currentFrameInputBox.setValue(self.sequenceSlider.value)
-    self.logic.visualize(self.customParamNode.sequenceBrowserNode,
-                           self.customParamNode.sequenceNode2DImages,
-                           self.customParamNode.node3DSegmentationLabelMap,
-                           self.customParamNode.sequenceNodeTransforms,
-                           self.customParamNode.opacity,
-                           self.customParamNode.overlayAsOutline,
-                           self.customParamNode.overlayThickness,
-                           True, # True to indicate that current alignment should be displayed
-                           customParamNode=self.customParamNode)
+    self.logic.visualize(
+        sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+        sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+        segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+        sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+        opacity=self.customParamNode.opacity,
+        overlayAsOutline=self.customParamNode.overlayAsOutline,
+        overlayThickness=self.customParamNode.overlayThickness,
+        show=False,
+        customParamNode=self.customParamNode,
+        deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+        transformType=self.transformTypeDropdown.currentText
+    )
     self.editSliceView(imageDict)
+
 
   def onSkipImages(self):
     """
@@ -2317,15 +2326,19 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.resetVisuals(False)
     self.sequenceSlider.setValue(num)
     self.customParamNode.sequenceBrowserNode.SetSelectedItemNumber(num - 1)
-    self.logic.visualize(self.customParamNode.sequenceBrowserNode,
-                         self.customParamNode.sequenceNode2DImages,
-                         self.customParamNode.node3DSegmentationLabelMap,
-                         self.customParamNode.sequenceNodeTransforms,
-                         self.customParamNode.opacity,
-                         self.customParamNode.overlayAsOutline,
-                         self.customParamNode.overlayThickness,
-                         True, # True to indicate that current alignment should be displayeds
-                         customParamNode=self.customParamNode)
+    self.logic.visualize(
+        sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+        sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+        segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+        sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+        opacity=self.customParamNode.opacity,
+        overlayAsOutline=self.customParamNode.overlayAsOutline,
+        overlayThickness=self.customParamNode.overlayThickness,
+        show=False,
+        customParamNode=self.customParamNode,
+        deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+        transformType=self.transformTypeDropdown.currentText
+    )
     self.editSliceView(imageDict)
     
     
