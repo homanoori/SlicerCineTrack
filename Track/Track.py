@@ -27,6 +27,7 @@ import functools
 import ctk
 import qt
 import vtk
+import SimpleITK as sitk
 
 import slicer
 from slicer.ScriptedLoadableModule import *
@@ -134,7 +135,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
     # "setMRMLScene(vtkMRMLScene*)" slot.
     # uiWidget.setMRMLScene(slicer.mrmlScene)
-   
 
     #
     # Begin GUI
@@ -620,7 +620,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.browseImagesButton.clicked.connect(self.onMultiFileBrowse)
     self.viewMoreButton.clicked.connect(self.onViewMoreClicked)
     self.deleteImagesButton.clicked.connect(self.onDeleteImagesButton)
-    self.overlayColorButton.connect('clicked(bool)', self.onOverlayColorPicker)
+    #self.overlayColorButton.connect('clicked(bool)', self.onOverlayColorPicker)
     self.overlayThicknessSlider.connect("valueChanged(double)", self.onOverlayThicknessChange)
 
     # These connections ensure that whenever user changes some settings on the GUI, that is saved
@@ -655,7 +655,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       lambda: [self.selectorTransformsFile.setCurrentPath(''), self.updateParameterNodeFromGUI("applyTransformsButton", "clicked")])
 
     # These connections will reset the visuals when one of the main inputs are modified
-    #self.selector2DImagesFiles.connect("currentPathChanged(QString)", self.resetVisuals)
+    self.selector2DImagesFiles.connect("currentPathChanged(QString)", self.resetVisuals)
     self.selector3DSegmentation.connect("currentPathChanged(QString)", self.resetVisuals)
     
 
@@ -724,8 +724,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           selectedFiles = sorted(list(selectedFiles))
           self.deformationFileSelector.addPaths(selectedFiles)
           self.deformationFieldPaths = selectedFiles
-
-
+          
   def cleanup(self):
     """
     Called when the application closes and the module widget is destroyed.
@@ -881,7 +880,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self._updatingGUIFromParameterNode = False
     
     # Disable the "Apply Transformation" button to assure the user the Transformation is applied
-    self.applyTransformButton.enabled = True
+    self.applyTransformButton.enabled = False
   def updateParameterNodeFromGUI(self, caller=None, event=None):
     """
     This method is called when the user makes any change in the GUI.
@@ -2585,7 +2584,13 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
           sliceNode.JumpSlice(center[0], center[1], center[2])
     
-    self.applyTransformButton.enabled = False
+    # Enable Apply if minimum required inputs are provided
+    # Transforms file is optional
+    inputsProvided = (
+       bool(self.customParamNode.sequenceNode2DImages) and
+       bool(self.customParamNode.node3DSegmentation)
+    )
+    self.applyTransformButton.enabled = inputsProvided
 
     slicer.util.forceRenderAllViews()
     slicer.app.processEvents()
