@@ -2238,6 +2238,15 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.logic.clearSliceForegrounds()
         except Exception:
             pass
+        
+    # Remove 3D volume rendering nodes to clear 3D view on reset
+    try:
+        nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLVolumeRenderingDisplayNode")
+        nodes.UnRegister(None)
+        for i in range(nodes.GetNumberOfItems()):
+            slicer.mrmlScene.RemoveNode(nodes.GetItemAsObject(i))
+    except Exception:
+        pass
 
     # 6) Reset simple UI knobs
     if hasattr(self, "overlayOutlineOnlyBox"): self.overlayOutlineOnlyBox.checked = True
