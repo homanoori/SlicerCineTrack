@@ -1438,12 +1438,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 print(f"Frame {i} — Reading transform from: {path}")
                 tx = sitk.ReadTransform(path)
 
-                toDisplacementFilter = sitk.TransformToDisplacementFieldFilter()
-                toDisplacementFilter.SetReferenceImage(mask)
-                displacementField = toDisplacementFilter.Execute(tx)
+                #toDisplacementFilter = sitk.TransformToDisplacementFieldFilter()
+                #toDisplacementFilter.SetReferenceImage(mask)
+                #displacementField = toDisplacementFilter.Execute(tx)
 
-                tx = sitk.DisplacementFieldTransform(displacementField)
-                deformedMask = sitk.Resample(mask, mask, tx)
+                #tx = sitk.DisplacementFieldTransform(displacementField)
+                deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
 
                 print(f"DeformedMask[{i}] unique values:", np.unique(sitk.GetArrayFromImage(deformedMask)))
 
