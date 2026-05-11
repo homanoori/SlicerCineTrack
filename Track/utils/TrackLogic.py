@@ -809,6 +809,39 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         labelMapNode.Modified()
         slicer.util.forceRenderAllViews()
         slicer.app.processEvents()
+
+  def visualizeImagesOnly(self, sequenceBrowser, sequenceNode2DImages):
+    """
+    Simplified visualization for cine images only — no segmentation, no transforms.
+    """
+    layoutManager = slicer.app.layoutManager()
+    proxy2DImageNode = sequenceBrowser.GetProxyNode(sequenceNode2DImages)
+
+    sliceWidget = self.getSliceWidget(layoutManager, proxy2DImageNode)
+    if sliceWidget is None:
+        return
+
+    sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+    sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
+    sliceCompositeNode.SetLabelVolumeID("")   # no overlay
+    sliceCompositeNode.SetForegroundVolumeID("None")
+
+    sliceNode = sliceWidget.mrmlSliceNode()
+    sliceNode.SetSliceVisible(True)
+
+    name = sliceWidget.sliceViewName
+    volumesLogic = slicer.modules.volumes.logic()
+    background = getattr(self, name.lower() + 'Background')
+    if background is None:
+        setattr(self, name.lower() + 'Background',
+                volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
+                                         proxy2DImageNode.GetAttribute('Sequences.BaseName')))
+    else:
+        background.SetAndObserveImageData(proxy2DImageNode.GetImageData())
+
+    sliceWidget.fitSliceToBackground()
+    slicer.util.forceRenderAllViews()
+    slicer.app.processEvents()
   
   def getSliceWidget(self, layoutManager, imageNode):
     """

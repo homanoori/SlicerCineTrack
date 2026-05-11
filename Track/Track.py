@@ -830,10 +830,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.selectorTransformsFile.enabled = False
       self.selectorTransformsFile.setToolTip("Load a valid Cine Images Folder to enable loading a Transforms file.")
 
-    # True if the 2D images, transforms and 3D segmentation have been provided
-    inputsProvided = self.customParamNode.sequenceNode2DImages and \
-                 (self.customParamNode.sequenceNodeTransforms or self.customParamNode.deformedMaskSequenceNode) and \
-                 self.customParamNode.node3DSegmentation
+    # Images alone are enough to enable playback
+    inputsProvided = bool (self.customParamNode.sequenceNode2DImages)
 
     self.updatePlaybackButtons(inputsProvided)
 
@@ -845,23 +843,36 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.sequenceSlider.setValue(imageNum)
       self.currentFrameInputBox.setValue(imageNum)
       
+      # Check whether the full overlay path is possible
+      hasSegmentation = bool(self.customParamNode.node3DSegmentation)
+      hasTransforms = bool(self.customParamNode.sequenceNodeTransforms or 
+                          self.customParamNode.deformedMaskSequenceNode)
 
-      # Trigger visualization with all current parameters
-      # Passes both standard transform and new deformation field settings
-      # transformType determines whether Translation or Displacement Field is used
-      self.logic.visualize(
-          sequenceBrowser=self.customParamNode.sequenceBrowserNode,
-          sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
-          segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
-          sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
-          opacity=self.customParamNode.opacity,
-          overlayAsOutline=self.customParamNode.overlayAsOutline,
-          overlayThickness=self.customParamNode.overlayThickness,
-          show=False,
-          customParamNode=self.customParamNode,
-          deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-          transformType=self.transformTypeDropdown.currentText
-      )
+      if hasSegmentation and hasTransforms:
+      
+        # Trigger visualization with all current parameters
+        # Passes both standard transform and new deformation field settings
+        # transformType determines whether Translation or Displacement Field is used
+        self.logic.visualize(
+            sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+            sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+            segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+            sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+            opacity=self.customParamNode.opacity,
+            overlayAsOutline=self.customParamNode.overlayAsOutline,
+            overlayThickness=self.customParamNode.overlayThickness,
+            show=False,
+            customParamNode=self.customParamNode,
+            deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+            transformType=self.transformTypeDropdown.currentText
+        )
+      
+      else:
+        # Images-only path
+        self.logic.visualizeImagesOnly(
+            sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+            sequenceNode2DImages=self.customParamNode.sequenceNode2DImages
+        )
       self.editSliceView(imageDict)
                            
     elif not self.customParamNode.sequenceBrowserNode:
@@ -879,8 +890,10 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # All the GUI updates are done
     self._updatingGUIFromParameterNode = False
     
-    # Disable the "Apply Transformation" button to assure the user the Transformation is applied
-    self.applyTransformButton.enabled = False
+    #self.applyTransformButton.enabled = False
+    # Only disable Apply if images are loaded — re-enable so user can trigger playback
+    self.applyTransformButton.enabled = inputsProvided
+
   def updateParameterNodeFromGUI(self, caller=None, event=None):
     """
     This method is called when the user makes any change in the GUI.
@@ -1044,8 +1057,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.customParamNode.sequenceNode2DImages = imagesSequenceNode
             # Track the number of total images within the parameter totalImages
             self.customParamNode.totalImages = imagesSequenceNode.GetNumberOfDataNodes()
-            self.currentFrameInputBox.setMaximum(
-              self.customParamNode.totalImages)  # allows for image counter to go above 99, if there are more than 99 images
+            self.transformationAppliedLabel.setVisible(False)  
+            self.currentFrameInputBox.setMaximum(self.customParamNode.totalImages)  # allows for image counter to go above 99, if there are more than 99 images
             self.totalFrameLabel.setText(f"of {self.customParamNode.totalImages}")
 
             if not activePlay:
@@ -1324,7 +1337,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           # No file provided — use identity transform (0,0,0) for each frame
           self.customParamNode.transformsFilePath = ""
           transformsList = [[0.0, 0.0, 0.0] for _ in range(numImages)]
-
         if transformsList:
           # Create transform nodes from the transform data and place them into a sequence node
           transformsSequenceNode = \
@@ -2376,9 +2388,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.divisionFrameLabel.enabled = True
       self.totalFrameLabel.enabled = True
       self.playbackSpeedBox.enabled = True
-      self.transformationAppliedLabel.setVisible(True)
+      # Only show this label when browser actually exists
+      hasSequenceBrowser = bool(self.customParamNode.sequenceBrowserNode)
+      self.transformationAppliedLabel.setVisible(hasSequenceBrowser)
       
-      if self.customParamNode.sequenceBrowserNode.GetPlaybackActive():
+      if hasSequenceBrowser and self.customParamNode.sequenceBrowserNode.GetPlaybackActive():
         # If we are playing
         self.sequenceSlider.setToolTip("Pause the player to enable this feature.")
         self.previousFrameButton.setToolTip("Move to the previous frame.")
@@ -2409,7 +2423,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.columnXSelector.enabled = False
         self.columnYSelector.enabled = False
         self.columnZSelector.enabled = False
-      else:
+      elif hasSequenceBrowser:
         self.sequenceSlider.setToolTip("Select the next frame for playback.")
         self.deleteImagesButton.setToolTip("Remove Cine images.")
         self.deleteSegmentationButton.setToolTip("Remove Segmentation file.")
@@ -2452,6 +2466,17 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           self.nextFrameButton.enabled = True
           self.previousFrameButton.enabled = True
           self.stopSequenceButton.enabled = True
+
+      else:
+         # Images loaded but Apply not pressed yet — no browser exists
+          self.applyTransformButton.enabled = True
+          self.transformationAppliedLabel.setVisible(False)
+          self.playSequenceButton.enabled = False
+          self.stopSequenceButton.enabled = False
+          self.nextFrameButton.enabled = False
+          self.previousFrameButton.enabled = False
+          self.sequenceSlider.enabled = False
+          self.currentFrameInputBox.enabled = False
     else:
       # If inputs are missing
       self.playSequenceButton.enabled = False
@@ -2464,7 +2489,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.totalFrameLabel.enabled = False
       self.playbackSpeedBox.enabled = False
       self.transformationAppliedLabel.setVisible(False)
-      self.applyTransformButton.enabled = False
+      self.applyTransformButton.enabled = inputsProvided
 
       # Add empty frame input box value
       self.currentFrameInputBox.setSpecialValueText(' ')
@@ -2562,19 +2587,31 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       # remove the currentFrameInputBox value
       self.currentFrameInputBox.setSpecialValueText('')
       
-      self.logic.visualize(
-                                  sequenceBrowser=self.customParamNode.sequenceBrowserNode,
-                                  sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
-                                  segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
-                                  sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
-                                  opacity=self.customParamNode.opacity,
-                                  overlayAsOutline=self.customParamNode.overlayAsOutline,
-                                  overlayThickness=self.customParamNode.overlayThickness,
-                                  show=False,
-                                  customParamNode=self.customParamNode,
-                                  deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-                                  transformType=self.transformTypeDropdown.currentText
-                              )
+      # Check whether the full overlay path is possible
+      hasSegmentation = bool(self.customParamNode.node3DSegmentation)
+      hasTransforms = bool(self.customParamNode.sequenceNodeTransforms or 
+                     self.customParamNode.deformedMaskSequenceNode)
+      
+      if hasSegmentation and hasTransforms:
+        self.logic.visualize(
+                                    sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+                                    sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+                                    segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+                                    sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,
+                                    opacity=self.customParamNode.opacity,
+                                    overlayAsOutline=self.customParamNode.overlayAsOutline,
+                                    overlayThickness=self.customParamNode.overlayThickness,
+                                    show=False,
+                                    customParamNode=self.customParamNode,
+                                    deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+                                    transformType=self.transformTypeDropdown.currentText
+                                )
+      else:
+        # new images-only path
+        self.logic.visualizeImagesOnly(
+            sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+            sequenceNode2DImages=self.customParamNode.sequenceNode2DImages
+        )
             # Test: change view to center
       layoutManager = slicer.app.layoutManager()
       for name in layoutManager.sliceViewNames():
@@ -2593,12 +2630,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
           sliceNode.JumpSlice(center[0], center[1], center[2])
     
-    # Enable Apply if minimum required inputs are provided
-    # Transforms file is optional
-    inputsProvided = (
-       bool(self.customParamNode.sequenceNode2DImages) and
-       bool(self.customParamNode.node3DSegmentation)
-    )
+    # Images alone are enough to enable Apply
+    inputsProvided = bool(self.customParamNode.sequenceNode2DImages)
     self.applyTransformButton.enabled = inputsProvided
 
     slicer.util.forceRenderAllViews()
