@@ -1598,6 +1598,14 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """
     Begin the playback when a user clicks the "Play" button and pause when user clicks the "Pause" button.
     """
+    hasSegmentation = bool(self.customParamNode.node3DSegmentation)
+    hasTransforms = bool(self.customParamNode.sequenceNodeTransforms or
+                        self.customParamNode.deformedMaskSequenceNode)
+    # In images-only mode, visualizeImagesOnly handles all views uniformly
+    # Not letting onPlayButton touch individual slice views to fix the disconnected playback on the red
+    if not hasSegmentation and not hasTransforms:
+        self.customParamNode.sequenceBrowserNode.SetPlaybackActive(True)
+        return
     layoutManager = slicer.app.layoutManager()
     self.customParamNode.sequenceBrowserNode.SetPlaybackItemSkippingEnabled(False) # Fixes image skipping bug on slower machines
     proxy2DImageNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(self.customParamNode.sequenceNode2DImages)

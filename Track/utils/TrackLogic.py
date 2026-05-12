@@ -814,32 +814,53 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     """
     Simplified visualization for cine images only — no segmentation, no transforms.
     """
+    if sequenceBrowser is None or sequenceNode2DImages is None:
+        return
+    
     layoutManager = slicer.app.layoutManager()
     proxy2DImageNode = sequenceBrowser.GetProxyNode(sequenceNode2DImages)
 
-    sliceWidget = self.getSliceWidget(layoutManager, proxy2DImageNode)
-    if sliceWidget is None:
+    if proxy2DImageNode is None:
         return
+    if proxy2DImageNode.GetImageData() is None:
+        return
+    
+     # Check if image is 2D or 3D and handle accordingly
+    if proxy2DImageNode.GetImageData().GetDataDimension() == 2:
+        # 2D image — show in the matching orientation view only
+        sliceWidget = self.getSliceWidget(layoutManager, proxy2DImageNode)
+        if sliceWidget is None:
+            return
 
-    sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
-    sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
-    sliceCompositeNode.SetLabelVolumeID("")   # no overlay
-    sliceCompositeNode.SetForegroundVolumeID("None")
+        sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+        sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
+        sliceCompositeNode.SetLabelVolumeID("")   # no overlay
+        sliceCompositeNode.SetForegroundVolumeID("None")
+        sliceWidget.mrmlSliceNode().SetSliceVisible(True)
+        sliceWidget.fitSliceToBackground()
 
-    sliceNode = sliceWidget.mrmlSliceNode()
-    sliceNode.SetSliceVisible(True)
+        name = sliceWidget.sliceViewName
+        volumesLogic = slicer.modules.volumes.logic()
+        background = getattr(self, name.lower() + 'Background')
+        if background is None:
+            setattr(self, name.lower() + 'Background',
+                    volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
+                                            proxy2DImageNode.GetAttribute('Sequences.BaseName')))
+        else:
+            background.SetAndObserveImageData(proxy2DImageNode.GetImageData())
 
-    name = sliceWidget.sliceViewName
-    volumesLogic = slicer.modules.volumes.logic()
-    background = getattr(self, name.lower() + 'Background')
-    if background is None:
-        setattr(self, name.lower() + 'Background',
-                volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
-                                         proxy2DImageNode.GetAttribute('Sequences.BaseName')))
     else:
-        background.SetAndObserveImageData(proxy2DImageNode.GetImageData())
+        # 3D image — show in all slice views
+        for name in layoutManager.sliceViewNames():
+            sliceWidget = layoutManager.sliceWidget(name)
+            if sliceWidget is None:
+                continue
+            sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+            sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
+            sliceCompositeNode.SetLabelVolumeID("")
+            sliceCompositeNode.SetForegroundVolumeID("None")
+            sliceWidget.fitSliceToBackground()
 
-    sliceWidget.fitSliceToBackground()
     slicer.util.forceRenderAllViews()
     slicer.app.processEvents()
   
