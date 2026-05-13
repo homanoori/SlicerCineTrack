@@ -819,14 +819,15 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     
     layoutManager = slicer.app.layoutManager()
     proxy2DImageNode = sequenceBrowser.GetProxyNode(sequenceNode2DImages)
-
     if proxy2DImageNode is None:
         return
-    if proxy2DImageNode.GetImageData() is None:
+    
+    imageData = proxy2DImageNode.GetImageData()
+    if imageData is None:
         return
     
      # Check if image is 2D or 3D and handle accordingly
-    if proxy2DImageNode.GetImageData().GetDataDimension() == 2:
+    if imageData.GetDataDimension() == 2:
         # 2D image — show in the matching orientation view only
         sliceWidget = self.getSliceWidget(layoutManager, proxy2DImageNode)
         if sliceWidget is None:
@@ -834,10 +835,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
         sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
         sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
-        sliceCompositeNode.SetLabelVolumeID("")   # no overlay
-        sliceCompositeNode.SetForegroundVolumeID("None")
-        sliceWidget.mrmlSliceNode().SetSliceVisible(True)
-        sliceWidget.fitSliceToBackground()
 
         name = sliceWidget.sliceViewName
         volumesLogic = slicer.modules.volumes.logic()
@@ -847,7 +844,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
                     volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
                                             proxy2DImageNode.GetAttribute('Sequences.BaseName')))
         else:
-            background.SetAndObserveImageData(proxy2DImageNode.GetImageData())
+            background.SetAndObserveImageData(imageData)
 
     else:
         # 3D image — show in all slice views
@@ -857,9 +854,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
                 continue
             sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
             sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
-            sliceCompositeNode.SetLabelVolumeID("")
-            sliceCompositeNode.SetForegroundVolumeID("None")
-            sliceWidget.fitSliceToBackground()
 
     slicer.util.forceRenderAllViews()
     slicer.app.processEvents()
