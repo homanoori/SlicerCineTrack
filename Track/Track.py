@@ -631,8 +631,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       lambda: self.updateParameterNodeFromGUI("selector3DSegmentation", "currentPathChanged"))
     self.selectorTransformsFile.connect("currentPathChanged(QString)", \
       self.onTransformsFilePathChange)
-    self.selector2DImagesFiles.connect("currentPathChanged(QString,QString)", \
-       lambda *args: self.updateGUIFromParameterNode("selector2DImagesFiles", "currentPathChanged"))
 
     self.columnXSelector.connect("currentTextChanged(QString)", self.onColumnXSelectorChange)
     self.columnYSelector.connect("currentTextChanged(QString)", self.onColumnXSelectorChange)
@@ -820,8 +818,10 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.selector3DSegmentation.currentPath = self.customParamNode.path3DSegmentation
     self.selectorTransformsFile.currentPath = self.customParamNode.transformsFilePath
+    self.selector2DImagesFiles.blockSignals(True)
     self.selector2DImagesFiles.clear()
     self.selector2DImagesFiles.addPaths(self.customParamNode.files2DImages)
+    self.selector2DImagesFiles.blockSignals(False)
 
     if self.customParamNode.sequenceNode2DImages:
       self.selectorTransformsFile.enabled = True
@@ -887,12 +887,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.overlayOutlineOnlyBox.checked = self.customParamNode.overlayAsOutline
 
-    # All the GUI updates are done
-    self._updatingGUIFromParameterNode = False
     
     #self.applyTransformButton.enabled = False
     # Only disable Apply if images are loaded — re-enable so user can trigger playback
     self.applyTransformButton.enabled = inputsProvided
+    self._updatingGUIFromParameterNode = False
 
   def updateParameterNodeFromGUI(self, caller=None, event=None):
     """
@@ -903,496 +902,80 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     if self.customParamNode is None or self._updatingGUIFromParameterNode:
       return
 
+    # Raise the guard BEFORE StartModify so EndModify cannot re-enter
+    self._updatingGUIFromParameterNode = True
     # Modify all properties in a single batch
     wasModified = self.customParamNode.StartModify()
 
-    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+    try:
 
-    if caller == "selector2DImagesFiles" and event == "pathsChanged":
-      # Remember if all inputs were previously provided
-      inputsProvided = self.selector3DSegmentation.currentPath != '' or self.selectorTransformsFile.currentPath != ''
-      # Since the transformation information is relative to the 2D images loaded into 3D Slicer,
-      # if the path changes, we want to remove any transforms related information. The user should
-      # reselect the transforms file they wish to use with the 2D images.
-      if self.customParamNode.transformsFilePath:
-        self.customParamNode.transformsFilePath = ""
-        self.customParamNode.sequenceNodeTransforms = None
+        shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
 
-      if len(self.selector2DImagesFiles.paths) == 0:
-        # Remove the Images folder stored in customParamNode
-        self.customParamNode.files2DImages = []
+        if caller == "selector2DImagesFiles" and event == "pathsChanged":
+          # Remember if all inputs were previously provided
+          inputsProvided = self.selector3DSegmentation.currentPath != '' or self.selectorTransformsFile.currentPath != ''
+          # Since the transformation information is relative to the 2D images loaded into 3D Slicer,
+          # if the path changes, we want to remove any transforms related information. The user should
+          # reselect the transforms file they wish to use with the 2D images.
+          if self.customParamNode.transformsFilePath:
+            self.customParamNode.transformsFilePath = ""
+            self.customParamNode.sequenceNodeTransforms = None
 
-        # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
-        nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
-        nodes.UnRegister(None)
-        if nodes.GetNumberOfItems() == 2:
-          nodeToRemove = nodes.GetItemAsObject(0)
-          slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-          slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-          slicer.mrmlScene.RemoveNode(nodeToRemove)
+          if len(self.selector2DImagesFiles.paths) == 0:
+            # Remove the Images folder stored in customParamNode
+            self.customParamNode.files2DImages = []
 
-        # Remove the unused Image Nodes Sequence node, containing the whole image sequence if it exists
-        nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Image Nodes Sequence")
-        nodes.UnRegister(None)
-        if nodes.GetNumberOfItems() == 1:
-          nodeToRemove = nodes.GetItemAsObject(0)
-          slicer.mrmlScene.RemoveNode(nodeToRemove)
+            # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
+            nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
+            nodes.UnRegister(None)
+            if nodes.GetNumberOfItems() == 2:
+              nodeToRemove = nodes.GetItemAsObject(0)
+              slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+              slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+              slicer.mrmlScene.RemoveNode(nodeToRemove)
 
-        # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
-        nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
-        nodes.UnRegister(None)
-        if nodes.GetNumberOfItems() == 2:
-          nodeToRemove = nodes.GetItemAsObject(0)
-          slicer.mrmlScene.RemoveNode(nodeToRemove)
-          
-        # Remove all nodes previously created by transforms data inside the scene if all inputs were previously provided
-        if inputsProvided:
-          # Remove the Image Nodes Sequence node
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
-          nodes.UnRegister(None)
-          nodeToRemove = nodes.GetItemAsObject(0)
-          slicer.mrmlScene.RemoveNode(nodeToRemove)
-          
-          # Remove the unused Sequence Browser if it exists
-          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            sequenceBrowserNodeToDelete = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(sequenceBrowserNodeToDelete)
-          
-          # Remove the unused Transforms Nodes Sequence, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-          
-          # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-            
-          # Remove the image nodes of each slice view used to preserve the slice views
-          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
-          nodes.UnRegister(None)
-          for node in nodes:
-            if node.GetName() == 'Image Nodes Sequence':
-              break
-            if node.GetName() == node.GetAttribute('Sequences.BaseName'):
-              slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
-              slicer.mrmlScene.RemoveNode(node)
+            # Remove the unused Image Nodes Sequence node, containing the whole image sequence if it exists
+            nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Image Nodes Sequence")
+            nodes.UnRegister(None)
+            if nodes.GetNumberOfItems() == 1:
+              nodeToRemove = nodes.GetItemAsObject(0)
+              slicer.mrmlScene.RemoveNode(nodeToRemove)
 
-          # Remove the Volume Rendering Node, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
-        # Remove all nodes created
-        else:
-          slicer.mrmlScene.Clear()
-
-      else:
-        # Set a param to hold the list of paths to the cine images
-        self.customParamNode.files2DImages = self.selector2DImagesFiles.paths
-
-        # Delete nodes if sequence is actively playing
-        activePlay = self.customParamNode.sequenceBrowserNode and \
-                     hasattr(self.customParamNode.sequenceBrowserNode, 'GetPlaybackActive') and \
-                     self.customParamNode.sequenceBrowserNode.GetPlaybackActive()
-        if activePlay:
-          # Remove the unused Sequence Browser if it exists
-          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            sequenceBrowserNodeToDelete = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(sequenceBrowserNodeToDelete)
-          
-          # Remove the image nodes of each slice view used to preserve the slice views
-          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
-          nodes.UnRegister(None)
-          for node in nodes:
-            if node.GetName() == node.GetAttribute('Sequences.BaseName'):
-              slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
-              slicer.mrmlScene.RemoveNode(node)
-
-          # Remove the unused Image Nodes Sequence node, containing the whole image sequence if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Image Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-            
-          # This is what isn't working
-          # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-            
-          # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-          
-          # Remove the unused Transforms Nodes Sequence, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-
-        # Load the images into 3D Slicer
-        imagesSequenceNode, cancelled = \
-          self.logic.loadImagesIntoSequenceNode(shNode, self.selector2DImagesFiles.paths)
-
-        if cancelled:
-          # Unset the param which holds the list of paths to the 2D images
-          self.customParamNode.files2DImages = []
-        else:
-          if imagesSequenceNode:
-            # Set a param to hold a sequence node which holds the cine images
-            self.customParamNode.sequenceNode2DImages = imagesSequenceNode
-            # Track the number of total images within the parameter totalImages
-            self.customParamNode.totalImages = imagesSequenceNode.GetNumberOfDataNodes()
-            self.transformationAppliedLabel.setVisible(False)  
-            self.currentFrameInputBox.setMaximum(self.customParamNode.totalImages)  # allows for image counter to go above 99, if there are more than 99 images
-            self.totalFrameLabel.setText(f"of {self.customParamNode.totalImages}")
-
-            if not activePlay:
-              # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
+            # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
+            nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+            nodes.UnRegister(None)
+            if nodes.GetNumberOfItems() == 2:
+              nodeToRemove = nodes.GetItemAsObject(0)
+              slicer.mrmlScene.RemoveNode(nodeToRemove)
+              
+            # Remove all nodes previously created by transforms data inside the scene if all inputs were previously provided
+            if inputsProvided:
+              # Remove the Image Nodes Sequence node
               nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
               nodes.UnRegister(None)
-              if nodes.GetNumberOfItems() == 2:
-                nodeToRemove = nodes.GetItemAsObject(0)
-                slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-                slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-                slicer.mrmlScene.RemoveNode(nodeToRemove)
-
-              # Remove the unused Image Nodes Sequence node, containing the whole image sequence if it exists
-              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Image Nodes Sequence")
+              nodeToRemove = nodes.GetItemAsObject(0)
+              slicer.mrmlScene.RemoveNode(nodeToRemove)
+              
+              # Remove the unused Sequence Browser if it exists
+              nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
               nodes.UnRegister(None)
-              if nodes.GetNumberOfItems() == 2:
-                nodeToRemove = nodes.GetItemAsObject(0)
-                slicer.mrmlScene.RemoveNode(nodeToRemove)
-
-              # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
-              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
-              nodes.UnRegister(None)
-              if nodes.GetNumberOfItems() == 2:
-                nodeToRemove = nodes.GetItemAsObject(0)
-                slicer.mrmlScene.RemoveNode(nodeToRemove)
-            
-          else:
-            self.totalFrameLabel.setText(f"of 0")
-            slicer.util.warningDisplay("No image files were found within the selected files.", "Input Error")
-
-    if caller == "selector3DSegmentation" and event == "currentPathChanged":
-        
-      currentPath = self.selector3DSegmentation.currentPath
-      fileName = os.path.basename(currentPath)
-      
-      if re.match('.*\\.dcm', currentPath): # if getting a dcm -> try install dcmrtstruct2nii
-        try:
-          from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
-        except ModuleNotFoundError:
-          if slicer.util.confirmOkCancelDisplay("To load a DICOM RT structure, the dcmrtstruct2nii module is required."
-                                    "Please click 'OK' to install it", "Missing Python packages"):
-            messageBox = qt.QMessageBox()
-            messageBox.setIcon(qt.QMessageBox.Information)
-            messageBox.setWindowTitle("Package Installation")
-            messageBox.setText("Installing 'dcmrtstruct2nii'...")
-            messageBox.setStandardButtons(qt.QMessageBox.NoButton)
-            messageBox.show()
-            slicer.app.processEvents()
-
-            slicer.util.pip_install('dcmrtstruct2nii')
-            from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
-            messageBox.setText(f"Package 'dcmrtstruct2nii' installed successfully. {fileName} will now load.")
-            slicer.app.processEvents()  # Process events to allow the dialog to update
-            qt.QTimer.singleShot(3000, messageBox.accept)
-
-            # Wait for user interaction
-            while messageBox.isVisible():
-                slicer.app.processEvents()
-            messageBox.hide()
-        except Exception as e:
-          print(e)
-          slicer.util.warningDisplay(f"{fileName} file failed to load.\nPlease load a .csv or .txt file instead. ",
-                                        "Failed to Load File")
-          return# Hide the message box
-
-        from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
-        structs = list_rt_structs(currentPath)
-        if len(structs) == 0:
-            slicer.util.warningDisplay(f"{fileName} does not contain any RT structures.",
-                                        "No RT Structures Found")
-            return
-        # show a dialog to select the struct and path to dicom
-        def onOK():
-          nonlocal currentPath
-          structure = structSelectorComboBox.currentText
-          dicomPath = dicomPathSelector.currentPath
-          outputPath = outputPathSelector.currentPath
-          structures = [structure]
-          segmentationPath = os.path.join(outputPath, 'mask_' + structure + '.nii.gz')
-          try:
-            messageBox = qt.QMessageBox()
-            messageBox.setIcon(qt.QMessageBox.Information)
-            messageBox.setWindowTitle("Converting DICOM RT-STRUCT")
-            messageBox.setText(f"Converting {structure} to a loadable format...")
-            messageBox.setStandardButtons(qt.QMessageBox.NoButton)
-            messageBox.show()
-            slicer.app.processEvents()
-            dcmrtstruct2nii(rtstruct_file=currentPath,dicom_file=dicomPath,output_path=outputPath, structures=structures,convert_original_dicom=False)
-            self.selector3DSegmentation.currentPath = segmentationPath
-            currentPath = segmentationPath
-            messageBox.setText(f"Convert DICOM RT_STRUCT successfully. Mask {structure} will now load.")
-            slicer.app.processEvents()  # Process events to allow the dialog to update
-            qt.QTimer.singleShot(3000, messageBox.accept)
-          except Exception as e:
-            slicer.util.warningDisplay(f"Failed to convert {fileName} to a loadable format.\n{e}",
-                                        "Failed to Convert File")
-            self.customParamNode.path3DSegmentation = ""
-            self.selector3DSegmentation.currentPath = ""
-            return
-          finally:
-            structSelectorDialog.accept()
-            structSelectorDialog.hide()
-        structSelectorDialogLayout = qt.QFormLayout()
-        structSelectorComboBox = qt.QComboBox()
-        structSelectorComboBox.addItems(structs)
-        structSelectorDialogLayout.addRow("Select the target segmentation:", structSelectorComboBox)
-        dicomPathSelector = ctk.ctkPathLineEdit()
-        dicomPathSelector.filters = ctk.ctkPathLineEdit.Dirs
-        structSelectorDialogLayout.addRow("DICOM images directory", dicomPathSelector)
-        outputPathSelector = ctk.ctkPathLineEdit()
-        outputPathSelector.filters = ctk.ctkPathLineEdit.Dirs
-        structSelectorDialogLayout.addRow("Output segmentation directory", outputPathSelector)
-        structSelectorDialogLayout.addWidget(qt.QLabel("Note: DICOM RT-STRUCT files are not directly loadable. Please provide the paths above to convert the segmentation into a loadable format."))
-        
-        
-        okButton = qt.QPushButton("OK")
-        okButton.setDefault(True)
-        
-        structSelectorDialogLayout.addWidget(okButton)     
-        
-        structSelectorDialog = qt.QDialog()
-        structSelectorDialog.setLayout(structSelectorDialogLayout)
-        structSelectorDialog.setModal(True)
-        okButton.connect("clicked()", onOK)
-        
-        structSelectorDialog.show()
-        while structSelectorDialog.isVisible():
-            slicer.app.processEvents()
-        if structSelectorDialog.result() == qt.QDialog.Rejected:
-          # Remove filepath for the Segmentation File in the `Inputs` section
-          self.customParamNode.path3DSegmentation = ""
-          self.selector3DSegmentation.currentPath = ""
-          return
-        structSelectorDialog.hide()      
-      
-      # Remove the image nodes of each slice view used to preserve the slice views
-      nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
-      nodes.UnRegister(None)
-      for node in nodes:
-        if node.GetName() == node.GetAttribute('Sequences.BaseName'):
-          slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
-          slicer.mrmlScene.RemoveNode(node)
-          
-      # Remove the label map node and the nodes it referenced, all created by the previous node
-      nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")
-      nodes.UnRegister(None)
-      if nodes.GetNumberOfItems() == 1:
-        nodeToRemove = nodes.GetItemAsObject(0)
-        slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-        if nodeToRemove.GetNumberOfDisplayNodes() == 1:
-          slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode().GetNodeReference('volumeProperty'))
-          slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-        slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-        slicer.mrmlScene.RemoveNode(nodeToRemove)
-      
-      # Remove the 3D segmentation node and the nodes it referenced, all created by the previous node
-      nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "3D Segmentation")
-      nodes.UnRegister(None)
-      if nodes.GetNumberOfItems() == 1:
-        nodeToRemove = nodes.GetItemAsObject(0)
-        slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-        slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-        slicer.mrmlScene.RemoveNode(nodeToRemove)
-      
-      # Remove previous node values stored in variables
-      self.customParamNode.node3DSegmentation = 0
-      self.customParamNode.node3DSegmentationLabelMap = 0
-
-      # Loads segmentation files
-      fileFormats = ['.*\\.mha', '.*\\.dcm', '.*\\.nrrd', '.*\\.nii', '.*\\.hdr', '.*\\.img', '.*\\.nhdr'] # Supported segmentation files
-      validFormat = any(re.match(format, currentPath) for format in fileFormats)
-      if validFormat:
-        # If a 3D segmentation node already exists, delete it before we load the new one
-        if self.customParamNode.node3DSegmentation:
-          nodeID = self.customParamNode.node3DSegmentation
-
-        # Set a param to hold the path to the 3D segmentation file
-        self.customParamNode.path3DSegmentation = self.selector3DSegmentation.currentPath
-
-        # Segmentation file should end with specified formats above
-        segmentationNode = slicer.util.loadVolume(self.selector3DSegmentation.currentPath,
-                                                  {"singleFile": True, "show": False})
-        
-        # Check if Segmentation file has less than 30 values:
-        if np.unique(slicer.util.arrayFromVolume(segmentationNode)).size > 30:
-           slicer.util.warningDisplay("This file contains more than 30 unique values. ")
-        self.selector3DSegmentation.currentPath = ''
-           
-           
-  
-        # Get array from volume
-        segArray = arrayFromVolume(segmentationNode)
-        uniqueLabels = np.unique(segArray)
-
-        # Check for multi-label (more than just 0 and 1)
-        nonZeroLabels = uniqueLabels[uniqueLabels != 0]
-
-        if len(nonZeroLabels) > 1:
-            # Remap to consecutive label values (e.g., 1, 2, 3, ...)
-            remapDict = {label: i+1 for i, label in enumerate(nonZeroLabels)}
-            for oldVal, newVal in remapDict.items():
-                
-                segArray[segArray == oldVal] = newVal
-
-            # Push updated array back into the segmentation node
-            updateVolumeFromArray(segmentationNode, segArray)
-
-        #  Debug: Check what label values actually exist
-        segArray = arrayFromVolume(segmentationNode)
-        uniqueLabels = np.unique(segArray)
-        
-        for val in uniqueLabels:
-            count = np.sum(segArray == val)
-
-
-
-        remappedLabels = list(range(1, len(nonZeroLabels) + 1))
-        self.addAdditionalOverlayColorButtons(remappedLabels, segmentationNode)
-
-        # Continue with existing logic
-        self.logic.clearSliceForegrounds()
-        segmentationNode.SetName("3D Segmentation")
-        # Set a param to hold the 3D segmentation node ID
-        nodeID = shNode.GetItemByDataNode(segmentationNode)
-        self.customParamNode.node3DSegmentation = nodeID
-
-        # Create a label map of the 3D segmentation that will be used to define the mask overlayed
-        # on the 2D images during playback
-        volumesModuleLogic = slicer.modules.volumes.logic()
-        segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', "3D Segmentation Label Map")
-        volumesModuleLogic.CreateLabelVolumeFromVolume(slicer.mrmlScene, segmentationLabelMap, segmentationNode)
-
-        # Set a param to hold the 3D segmentation label map ID
-        labelMapID = shNode.GetItemByDataNode(segmentationLabelMap)
-        self.customParamNode.node3DSegmentationLabelMap = labelMapID
-        
-        
-        # Apply any pending colors that were stored before the label map was created
-        self.applyPendingLabelColors()
-
-
-      else:
-        # Remove filepath for the Segmentation File in the `Inputs` section
-        self.customParamNode.path3DSegmentation = ''
-        if self.selector3DSegmentation.currentPath != '':
-          slicer.util.warningDisplay("Not a valid file format."
-                                   "The file was not loaded into 3D Slicer.", "Input Error")
-        self.selector3DSegmentation.currentPath = ''
-    
-
-                           
-    if caller == "applyTransformsButton" and event == "clicked":
-
-      if self.transformTypeDropdown.currentText == "Translation":
-
-
-        # Set a param to hold the path to the transformations .csv file
-
-        numImages = self.customParamNode.totalImages
-
-
-        if self.selectorTransformsFile.currentPath:
-          
-
-          # If even one line cannot be read correctly/is missing our playback cannot be successful. We
-          # will validate the tranformations input first. If the input is valid, we get a list
-          # containing all of the transformations read from the file.
-          headers = []
-          headers.append(self.columnXSelector.currentText)
-          headers.append(self.columnYSelector.currentText)
-          headers.append(self.columnZSelector.currentText)
-          transformsList = \
-            self.logic.validateTransformsInput(self.selectorTransformsFile.currentPath, numImages,headers)
-          
-        else:
-          # No file provided — use identity transform (0,0,0) for each frame
-          self.customParamNode.transformsFilePath = ""
-          transformsList = [[0.0, 0.0, 0.0] for _ in range(numImages)]
-        if transformsList:
-          # Create transform nodes from the transform data and place them into a sequence node
-          transformsSequenceNode = \
-            self.logic.createTransformNodesFromTransformData(shNode, transformsList, numImages)
-
-          if not transformsSequenceNode:
-            # If cancelled unset param to hold path to the transformations .csv file
-            self.customParamNode.transformsFilePath = ""
-          else:
-            # Set a param to hold the sequence node which holds the transform nodes
-            self.customParamNode.sequenceNodeTransforms = transformsSequenceNode
-            # Create a sequence browser node
-            sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", \
-                                                                    "Sequence Browser")
-            sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
-            sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNodeTransforms)
-            # We need to observe the changes to the sequence browser so that our GUI will update as
-            # the sequence progresses
-            self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, \
-                            self.updateGUIFromParameterNode)
-            # Set a param to hold the sequence browser node
-            self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
-            
-            # Since the code above added another set of image nodes, transforms nodes and
-            # sequence browser nodes, remove the unused sequence browser node, image nodes,
-            # and transforms nodes, if they exist
-            nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
-            nodes.UnRegister(None)
-            # Ensure that there is an extra sequence browser node, since we need exactly
-            # one sequence browser node at a time
-            if nodes.GetNumberOfItems() == 2:
-              sequenceBrowserNodeToDelete = nodes.GetItemAsObject(0)
-                
-              # Remove the unused sequence browser node
-              slicer.mrmlScene.RemoveNode(sequenceBrowserNodeToDelete)
-
+              if nodes.GetNumberOfItems() == 1:
+                sequenceBrowserNodeToDelete = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(sequenceBrowserNodeToDelete)
+              
               # Remove the unused Transforms Nodes Sequence, if it exists
               nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
               nodes.UnRegister(None)
-              if nodes.GetNumberOfItems() == 2:
+              if nodes.GetNumberOfItems() == 1:
                 nodeToRemove = nodes.GetItemAsObject(0)
                 slicer.mrmlScene.RemoveNode(nodeToRemove)
               
               # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
               nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
               nodes.UnRegister(None)
-              if nodes.GetNumberOfItems() == 2:
+              if nodes.GetNumberOfItems() == 1:
                 nodeToRemove = nodes.GetItemAsObject(0)
                 slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-                slicer.mrmlScene.RemoveNode(nodeToRemove)
-            
-              # Remove the unused Image Nodes Sequence, containing each image node, if it exists
-              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
-              nodes.UnRegister(None)
-              if nodes.GetNumberOfItems() == 2:
-                nodeToRemove = nodes.GetItemAsObject(0)
                 slicer.mrmlScene.RemoveNode(nodeToRemove)
                 
               # Remove the image nodes of each slice view used to preserve the slice views
@@ -1404,136 +987,558 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 if node.GetName() == node.GetAttribute('Sequences.BaseName'):
                   slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
                   slicer.mrmlScene.RemoveNode(node)
-            self.overlayThicknessSlider.enabled = True
 
-            # Load first image of the sequence when all required inputs are satisfied
-            self.resetVisuals()
+              # Remove the Volume Rendering Node, if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+            # Remove all nodes created
+            else:
+              slicer.mrmlScene.Clear()
+
+          else:
+            # Set a param to hold the list of paths to the cine images
+            self.customParamNode.files2DImages = self.selector2DImagesFiles.paths
+
+            # Delete nodes if sequence is actively playing
+            activePlay = self.customParamNode.sequenceBrowserNode and \
+                        hasattr(self.customParamNode.sequenceBrowserNode, 'GetPlaybackActive') and \
+                        self.customParamNode.sequenceBrowserNode.GetPlaybackActive()
+            if activePlay:
+              # Remove the unused Sequence Browser if it exists
+              nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                sequenceBrowserNodeToDelete = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(sequenceBrowserNodeToDelete)
+              
+              # Remove the image nodes of each slice view used to preserve the slice views
+              nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
+              nodes.UnRegister(None)
+              for node in nodes:
+                if node.GetName() == node.GetAttribute('Sequences.BaseName'):
+                  slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
+                  slicer.mrmlScene.RemoveNode(node)
+
+              # Remove the unused Image Nodes Sequence node, containing the whole image sequence if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Image Nodes Sequence")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                nodeToRemove = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(nodeToRemove)
+                
+              # This is what isn't working
+              # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                nodeToRemove = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(nodeToRemove)
+                
+              # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                nodeToRemove = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(nodeToRemove)
+              
+              # Remove the unused Transforms Nodes Sequence, if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                nodeToRemove = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(nodeToRemove)
+
+            # Load the images into 3D Slicer
+            imagesSequenceNode, cancelled = \
+              self.logic.loadImagesIntoSequenceNode(shNode, self.selector2DImagesFiles.paths)
+
+            if cancelled:
+              # Unset the param which holds the list of paths to the 2D images
+              self.customParamNode.files2DImages = []
+            else:
+              if imagesSequenceNode:
+                # Set a param to hold a sequence node which holds the cine images
+                self.customParamNode.sequenceNode2DImages = imagesSequenceNode
+                # Track the number of total images within the parameter totalImages
+                self.customParamNode.totalImages = imagesSequenceNode.GetNumberOfDataNodes()
+                self.transformationAppliedLabel.setVisible(False)  
+                self.currentFrameInputBox.setMaximum(self.customParamNode.totalImages)  # allows for image counter to go above 99, if there are more than 99 images
+                self.totalFrameLabel.setText(f"of {self.customParamNode.totalImages}")
+
+                if not activePlay:
+                  # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
+                  nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
+                  nodes.UnRegister(None)
+                  if nodes.GetNumberOfItems() == 2:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+
+                  # Remove the unused Image Nodes Sequence node, containing the whole image sequence if it exists
+                  nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Image Nodes Sequence")
+                  nodes.UnRegister(None)
+                  if nodes.GetNumberOfItems() == 2:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+
+                  # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
+                  nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+                  nodes.UnRegister(None)
+                  if nodes.GetNumberOfItems() == 2:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+                
+              else:
+                self.totalFrameLabel.setText(f"of 0")
+                slicer.util.warningDisplay("No image files were found within the selected files.", "Input Error")
+
+        if caller == "selector3DSegmentation" and event == "currentPathChanged":
             
-        else:
-          # If the user inputted file in the Tranforms File input is not accepted, remove the nodes created
-          # from the previously inputted transforms file, if it exists. Also, remove filepath in Transforms
-          # File in the `Inputs` section since the input is invalid.
-
-          # Remove the unused Transforms Nodes Sequence, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
+          currentPath = self.selector3DSegmentation.currentPath
+          fileName = os.path.basename(currentPath)
           
-          # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+          if re.match('.*\\.dcm', currentPath): # if getting a dcm -> try install dcmrtstruct2nii
+            try:
+              from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
+            except ModuleNotFoundError:
+              if slicer.util.confirmOkCancelDisplay("To load a DICOM RT structure, the dcmrtstruct2nii module is required."
+                                        "Please click 'OK' to install it", "Missing Python packages"):
+                messageBox = qt.QMessageBox()
+                messageBox.setIcon(qt.QMessageBox.Information)
+                messageBox.setWindowTitle("Package Installation")
+                messageBox.setText("Installing 'dcmrtstruct2nii'...")
+                messageBox.setStandardButtons(qt.QMessageBox.NoButton)
+                messageBox.show()
+                slicer.app.processEvents()
+
+                slicer.util.pip_install('dcmrtstruct2nii')
+                from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
+                messageBox.setText(f"Package 'dcmrtstruct2nii' installed successfully. {fileName} will now load.")
+                slicer.app.processEvents()  # Process events to allow the dialog to update
+                qt.QTimer.singleShot(3000, messageBox.accept)
+
+                # Wait for user interaction
+                while messageBox.isVisible():
+                    slicer.app.processEvents()
+                messageBox.hide()
+            except Exception as e:
+              print(e)
+              slicer.util.warningDisplay(f"{fileName} file failed to load.\nPlease load a .csv or .txt file instead. ",
+                                            "Failed to Load File")
+              return# Hide the message box
+
+            from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
+            structs = list_rt_structs(currentPath)
+            if len(structs) == 0:
+                slicer.util.warningDisplay(f"{fileName} does not contain any RT structures.",
+                                            "No RT Structures Found")
+                return
+            # show a dialog to select the struct and path to dicom
+            def onOK():
+              nonlocal currentPath
+              structure = structSelectorComboBox.currentText
+              dicomPath = dicomPathSelector.currentPath
+              outputPath = outputPathSelector.currentPath
+              structures = [structure]
+              segmentationPath = os.path.join(outputPath, 'mask_' + structure + '.nii.gz')
+              try:
+                messageBox = qt.QMessageBox()
+                messageBox.setIcon(qt.QMessageBox.Information)
+                messageBox.setWindowTitle("Converting DICOM RT-STRUCT")
+                messageBox.setText(f"Converting {structure} to a loadable format...")
+                messageBox.setStandardButtons(qt.QMessageBox.NoButton)
+                messageBox.show()
+                slicer.app.processEvents()
+                dcmrtstruct2nii(rtstruct_file=currentPath,dicom_file=dicomPath,output_path=outputPath, structures=structures,convert_original_dicom=False)
+                self.selector3DSegmentation.currentPath = segmentationPath
+                currentPath = segmentationPath
+                messageBox.setText(f"Convert DICOM RT_STRUCT successfully. Mask {structure} will now load.")
+                slicer.app.processEvents()  # Process events to allow the dialog to update
+                qt.QTimer.singleShot(3000, messageBox.accept)
+              except Exception as e:
+                slicer.util.warningDisplay(f"Failed to convert {fileName} to a loadable format.\n{e}",
+                                            "Failed to Convert File")
+                self.customParamNode.path3DSegmentation = ""
+                self.selector3DSegmentation.currentPath = ""
+                return
+              finally:
+                structSelectorDialog.accept()
+                structSelectorDialog.hide()
+            structSelectorDialogLayout = qt.QFormLayout()
+            structSelectorComboBox = qt.QComboBox()
+            structSelectorComboBox.addItems(structs)
+            structSelectorDialogLayout.addRow("Select the target segmentation:", structSelectorComboBox)
+            dicomPathSelector = ctk.ctkPathLineEdit()
+            dicomPathSelector.filters = ctk.ctkPathLineEdit.Dirs
+            structSelectorDialogLayout.addRow("DICOM images directory", dicomPathSelector)
+            outputPathSelector = ctk.ctkPathLineEdit()
+            outputPathSelector.filters = ctk.ctkPathLineEdit.Dirs
+            structSelectorDialogLayout.addRow("Output segmentation directory", outputPathSelector)
+            structSelectorDialogLayout.addWidget(qt.QLabel("Note: DICOM RT-STRUCT files are not directly loadable. Please provide the paths above to convert the segmentation into a loadable format."))
+            
+            
+            okButton = qt.QPushButton("OK")
+            okButton.setDefault(True)
+            
+            structSelectorDialogLayout.addWidget(okButton)     
+            
+            structSelectorDialog = qt.QDialog()
+            structSelectorDialog.setLayout(structSelectorDialogLayout)
+            structSelectorDialog.setModal(True)
+            okButton.connect("clicked()", onOK)
+            
+            structSelectorDialog.show()
+            while structSelectorDialog.isVisible():
+                slicer.app.processEvents()
+            if structSelectorDialog.result() == qt.QDialog.Rejected:
+              # Remove filepath for the Segmentation File in the `Inputs` section
+              self.customParamNode.path3DSegmentation = ""
+              self.selector3DSegmentation.currentPath = ""
+              return
+            structSelectorDialog.hide()      
+          
+          # Remove the image nodes of each slice view used to preserve the slice views
+          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
+          nodes.UnRegister(None)
+          for node in nodes:
+            if node.GetName() == node.GetAttribute('Sequences.BaseName'):
+              slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
+              slicer.mrmlScene.RemoveNode(node)
+              
+          # Remove the label map node and the nodes it referenced, all created by the previous node
+          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")
           nodes.UnRegister(None)
           if nodes.GetNumberOfItems() == 1:
             nodeToRemove = nodes.GetItemAsObject(0)
+            slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+            if nodeToRemove.GetNumberOfDisplayNodes() == 1:
+              slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode().GetNodeReference('volumeProperty'))
+              slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
             slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
             slicer.mrmlScene.RemoveNode(nodeToRemove)
+          
+          # Remove the 3D segmentation node and the nodes it referenced, all created by the previous node
+          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "3D Segmentation")
+          nodes.UnRegister(None)
+          if nodes.GetNumberOfItems() == 1:
+            nodeToRemove = nodes.GetItemAsObject(0)
+            slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+            slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+            slicer.mrmlScene.RemoveNode(nodeToRemove)
+          
+          # Remove previous node values stored in variables
+          self.customParamNode.node3DSegmentation = 0
+          self.customParamNode.node3DSegmentationLabelMap = 0
 
-          # Remove filepath for the Transforms File in the `Inputs` section
-          self.customParamNode.transformsFilePath = ''
-          self.selectorTransformsFile.currentPath = ''
+          # Loads segmentation files
+          fileFormats = ['.*\\.mha', '.*\\.dcm', '.*\\.nrrd', '.*\\.nii', '.*\\.hdr', '.*\\.img', '.*\\.nhdr'] # Supported segmentation files
+          validFormat = any(re.match(format, currentPath) for format in fileFormats)
+          if validFormat:
+            # If a 3D segmentation node already exists, delete it before we load the new one
+            if self.customParamNode.node3DSegmentation:
+              nodeID = self.customParamNode.node3DSegmentation
 
-      #Deformation Field
-      else:
-        if len(self.deformationFieldPaths) != self.customParamNode.totalImages:
-            slicer.util.errorDisplay("Number of deformation field files must match number of cine images.", "Input Error")
-            return
+            # Set a param to hold the path to the 3D segmentation file
+            self.customParamNode.path3DSegmentation = self.selector3DSegmentation.currentPath
 
-        # Create the SequenceNode to store the masks
-        deformedMaskSequenceNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceNode", "Deformed Mask Sequence")
-        self.customParamNode.deformedMaskSequenceNode = deformedMaskSequenceNode
+            # Segmentation file should end with specified formats above
+            segmentationNode = slicer.util.loadVolume(self.selector3DSegmentation.currentPath,
+                                                      {"singleFile": True, "show": False})
+            
+            # Check if Segmentation file has less than 30 values:
+            if np.unique(slicer.util.arrayFromVolume(segmentationNode)).size > 30:
+              slicer.util.warningDisplay("This file contains more than 30 unique values. ")
+            self.selector3DSegmentation.currentPath = ''
+              
+              
+      
+            # Get array from volume
+            segArray = arrayFromVolume(segmentationNode)
+            uniqueLabels = np.unique(segArray)
 
-        mask = sitk.ReadImage(self.customParamNode.path3DSegmentation)
+            # Check for multi-label (more than just 0 and 1)
+            nonZeroLabels = uniqueLabels[uniqueLabels != 0]
 
-        for i, path in enumerate(self.deformationFieldPaths):
-            try:
-                print(f"Frame {i} — Reading transform from: {path}")
-                tx = sitk.ReadTransform(path)
+            if len(nonZeroLabels) > 1:
+                # Remap to consecutive label values (e.g., 1, 2, 3, ...)
+                remapDict = {label: i+1 for i, label in enumerate(nonZeroLabels)}
+                for oldVal, newVal in remapDict.items():
+                    
+                    segArray[segArray == oldVal] = newVal
 
-                #toDisplacementFilter = sitk.TransformToDisplacementFieldFilter()
-                #toDisplacementFilter.SetReferenceImage(mask)
-                #displacementField = toDisplacementFilter.Execute(tx)
+                # Push updated array back into the segmentation node
+                updateVolumeFromArray(segmentationNode, segArray)
 
-                #tx = sitk.DisplacementFieldTransform(displacementField)
-                deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
+            #  Debug: Check what label values actually exist
+            segArray = arrayFromVolume(segmentationNode)
+            uniqueLabels = np.unique(segArray)
+            
+            for val in uniqueLabels:
+                count = np.sum(segArray == val)
 
-                print(f"DeformedMask[{i}] unique values:", np.unique(sitk.GetArrayFromImage(deformedMask)))
 
-                # Create volume node directly in memory without saving to disk
-                volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"DeformedMask_{i}")
+
+            remappedLabels = list(range(1, len(nonZeroLabels) + 1))
+            self.addAdditionalOverlayColorButtons(remappedLabels, segmentationNode)
+
+            # Continue with existing logic
+            self.logic.clearSliceForegrounds()
+            segmentationNode.SetName("3D Segmentation")
+            # Set a param to hold the 3D segmentation node ID
+            nodeID = shNode.GetItemByDataNode(segmentationNode)
+            self.customParamNode.node3DSegmentation = nodeID
+
+            # Create a label map of the 3D segmentation that will be used to define the mask overlayed
+            # on the 2D images during playback
+            volumesModuleLogic = slicer.modules.volumes.logic()
+            segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', "3D Segmentation Label Map")
+            volumesModuleLogic.CreateLabelVolumeFromVolume(slicer.mrmlScene, segmentationLabelMap, segmentationNode)
+
+            # Set a param to hold the 3D segmentation label map ID
+            labelMapID = shNode.GetItemByDataNode(segmentationLabelMap)
+            self.customParamNode.node3DSegmentationLabelMap = labelMapID
+            
+            
+            # Apply any pending colors that were stored before the label map was created
+            self.applyPendingLabelColors()
+
+
+          else:
+            # Remove filepath for the Segmentation File in the `Inputs` section
+            self.customParamNode.path3DSegmentation = ''
+            if self.selector3DSegmentation.currentPath != '':
+              slicer.util.warningDisplay("Not a valid file format."
+                                      "The file was not loaded into 3D Slicer.", "Input Error")
+            self.selector3DSegmentation.currentPath = ''
+        
+
+                              
+        if caller == "applyTransformsButton" and event == "clicked":
+
+          if self.transformTypeDropdown.currentText == "Translation":
+
+
+            # Set a param to hold the path to the transformations .csv file
+
+            numImages = self.customParamNode.totalImages
+
+
+            if self.selectorTransformsFile.currentPath:
+              
+
+              # If even one line cannot be read correctly/is missing our playback cannot be successful. We
+              # will validate the tranformations input first. If the input is valid, we get a list
+              # containing all of the transformations read from the file.
+              headers = []
+              headers.append(self.columnXSelector.currentText)
+              headers.append(self.columnYSelector.currentText)
+              headers.append(self.columnZSelector.currentText)
+              transformsList = \
+                self.logic.validateTransformsInput(self.selectorTransformsFile.currentPath, numImages,headers)
+              
+            else:
+              # No file provided — use identity transform (0,0,0) for each frame
+              self.customParamNode.transformsFilePath = ""
+              transformsList = [[0.0, 0.0, 0.0] for _ in range(numImages)]
+            if transformsList:
+              # Create transform nodes from the transform data and place them into a sequence node
+              transformsSequenceNode = \
+                self.logic.createTransformNodesFromTransformData(shNode, transformsList, numImages)
+
+              if not transformsSequenceNode:
+                # If cancelled unset param to hold path to the transformations .csv file
+                self.customParamNode.transformsFilePath = ""
+              else:
+                # Set a param to hold the sequence node which holds the transform nodes
+                self.customParamNode.sequenceNodeTransforms = transformsSequenceNode
+                # Create a sequence browser node
+                sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", \
+                                                                        "Sequence Browser")
+                sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
+                sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNodeTransforms)
+                # We need to observe the changes to the sequence browser so that our GUI will update as
+                # the sequence progresses
+                self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, \
+                                self.updateGUIFromParameterNode)
+                # Set a param to hold the sequence browser node
+                self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
                 
-                # Convert SimpleITK image to numpy array and update the volume node
-                deformedMaskArray = sitk.GetArrayFromImage(deformedMask)
-                slicer.util.updateVolumeFromArray(volumeNode, deformedMaskArray)
-                
-                # Copy the image properties from the original mask
-                volumeNode.SetOrigin(mask.GetOrigin())
-                volumeNode.SetSpacing(mask.GetSpacing())
-                
-                # Set the image direction
-                direction = mask.GetDirection()
-                vtkMatrix = vtk.vtkMatrix4x4()
-                for row in range(3):
-                    for col in range(3):
-                        vtkMatrix.SetElement(row, col, direction[row * 3 + col])
-                volumeNode.SetIJKToRASDirectionMatrix(vtkMatrix)
-                
-                deformedMaskSequenceNode.SetDataNodeAtValue(volumeNode, str(i))
+                # Since the code above added another set of image nodes, transforms nodes and
+                # sequence browser nodes, remove the unused sequence browser node, image nodes,
+                # and transforms nodes, if they exist
+                nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
+                nodes.UnRegister(None)
+                # Ensure that there is an extra sequence browser node, since we need exactly
+                # one sequence browser node at a time
+                if nodes.GetNumberOfItems() == 2:
+                  sequenceBrowserNodeToDelete = nodes.GetItemAsObject(0)
+                    
+                  # Remove the unused sequence browser node
+                  slicer.mrmlScene.RemoveNode(sequenceBrowserNodeToDelete)
 
-            except Exception as e:
-                slicer.util.errorDisplay(f"Failed to apply deformation field to mask {i}: {e}")
+                  # Remove the unused Transforms Nodes Sequence, if it exists
+                  nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
+                  nodes.UnRegister(None)
+                  if nodes.GetNumberOfItems() == 2:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+                  
+                  # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
+                  nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+                  nodes.UnRegister(None)
+                  if nodes.GetNumberOfItems() == 2:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+                
+                  # Remove the unused Image Nodes Sequence, containing each image node, if it exists
+                  nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
+                  nodes.UnRegister(None)
+                  if nodes.GetNumberOfItems() == 2:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+                    
+                  # Remove the image nodes of each slice view used to preserve the slice views
+                  nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
+                  nodes.UnRegister(None)
+                  for node in nodes:
+                    if node.GetName() == 'Image Nodes Sequence':
+                      break
+                    if node.GetName() == node.GetAttribute('Sequences.BaseName'):
+                      slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
+                      slicer.mrmlScene.RemoveNode(node)
+                self.overlayThicknessSlider.enabled = True
+
+                # Load first image of the sequence when all required inputs are satisfied
+                self.resetVisuals()
+                
+            else:
+              # If the user inputted file in the Tranforms File input is not accepted, remove the nodes created
+              # from the previously inputted transforms file, if it exists. Also, remove filepath in Transforms
+              # File in the `Inputs` section since the input is invalid.
+
+              # Remove the unused Transforms Nodes Sequence, if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Transform Nodes Sequence")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                nodeToRemove = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(nodeToRemove)
+              
+              # Remove the unused Transforms Nodes Sequence containing each linear transform node, if it exists
+              nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLLinearTransformNode", "Transform Nodes Sequence")
+              nodes.UnRegister(None)
+              if nodes.GetNumberOfItems() == 1:
+                nodeToRemove = nodes.GetItemAsObject(0)
+                slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+                slicer.mrmlScene.RemoveNode(nodeToRemove)
+
+              # Remove filepath for the Transforms File in the `Inputs` section
+              self.customParamNode.transformsFilePath = ''
+              self.selectorTransformsFile.currentPath = ''
+
+          #Deformation Field
+          else:
+            if len(self.deformationFieldPaths) != self.customParamNode.totalImages:
+                slicer.util.errorDisplay("Number of deformation field files must match number of cine images.", "Input Error")
                 return
 
-        # Playback setup
-        sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
-        sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
-        sequenceBrowserNode.AddSynchronizedSequenceNode(deformedMaskSequenceNode)
+            # Create the SequenceNode to store the masks
+            deformedMaskSequenceNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceNode", "Deformed Mask Sequence")
+            self.customParamNode.deformedMaskSequenceNode = deformedMaskSequenceNode
 
-        sequenceBrowserNode.SetRecording(deformedMaskSequenceNode, False)
-        sequenceBrowserNode.SetPlayback(deformedMaskSequenceNode, True)
-        sequenceBrowserNode.SetSelectedItemNumber(0)
-        sequenceBrowserNode.SetPlaybackRateFps(10)
+            mask = sitk.ReadImage(self.customParamNode.path3DSegmentation)
 
-        layoutManager = slicer.app.layoutManager()
-        for name in layoutManager.sliceViewNames():
-            sliceWidget = layoutManager.sliceWidget(name)
-            sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+            for i, path in enumerate(self.deformationFieldPaths):
+                try:
+                    print(f"Frame {i} — Reading transform from: {path}")
+                    tx = sitk.ReadTransform(path)
 
-            currentItemIndex = sequenceBrowserNode.GetSelectedItemNumber()
-            currentLabelNode = deformedMaskSequenceNode.GetDataNodeAtValue(str(currentItemIndex))
+                    #toDisplacementFilter = sitk.TransformToDisplacementFieldFilter()
+                    #toDisplacementFilter.SetReferenceImage(mask)
+                    #displacementField = toDisplacementFilter.Execute(tx)
 
-            if currentLabelNode:
-                sliceCompositeNode.SetLabelVolumeID(currentLabelNode.GetID())
-                sliceCompositeNode.SetLabelOpacity(self.customParamNode.opacity)
-                sliceWidget.mrmlSliceNode().SetUseLabelOutline(self.customParamNode.overlayAsOutline)
+                    #tx = sitk.DisplacementFieldTransform(displacementField)
+                    deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
 
-        self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+                    print(f"DeformedMask[{i}] unique values:", np.unique(sitk.GetArrayFromImage(deformedMask)))
 
-        # Register sequence browser (for playback control in the UI)
-        self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
+                    # Create volume node directly in memory without saving to disk
+                    volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"DeformedMask_{i}")
+                    
+                    # Convert SimpleITK image to numpy array and update the volume node
+                    deformedMaskArray = sitk.GetArrayFromImage(deformedMask)
+                    slicer.util.updateVolumeFromArray(volumeNode, deformedMaskArray)
+                    
+                    # Copy the image properties from the original mask
+                    volumeNode.SetOrigin(mask.GetOrigin())
+                    volumeNode.SetSpacing(mask.GetSpacing())
+                    
+                    # Set the image direction
+                    direction = mask.GetDirection()
+                    vtkMatrix = vtk.vtkMatrix4x4()
+                    for row in range(3):
+                        for col in range(3):
+                            vtkMatrix.SetElement(row, col, direction[row * 3 + col])
+                    volumeNode.SetIJKToRASDirectionMatrix(vtkMatrix)
+                    
+                    deformedMaskSequenceNode.SetDataNodeAtValue(volumeNode, str(i))
 
-        # Done—reset visuals to show new playback
-        self.resetVisuals()
+                except Exception as e:
+                    slicer.util.errorDisplay(f"Failed to apply deformation field to mask {i}: {e}")
+                    return
 
-        self.updateGUIFromParameterNode()
+            # Playback setup
+            sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
+            sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
+            sequenceBrowserNode.AddSynchronizedSequenceNode(deformedMaskSequenceNode)
 
-        self.logic.visualize(
-    sequenceBrowser=self.customParamNode.sequenceBrowserNode,
-    sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
-    segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
-    sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
-    opacity=self.customParamNode.opacity,
-    overlayAsOutline=self.customParamNode.overlayAsOutline,
-    overlayThickness=self.customParamNode.overlayThickness,
-    show=False,
-    customParamNode=self.customParamNode,
-    deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-    transformType="Deformation Field"
-)
+            sequenceBrowserNode.SetRecording(deformedMaskSequenceNode, False)
+            sequenceBrowserNode.SetPlayback(deformedMaskSequenceNode, True)
+            sequenceBrowserNode.SetSelectedItemNumber(0)
+            sequenceBrowserNode.SetPlaybackRateFps(10)
 
+            layoutManager = slicer.app.layoutManager()
+            for name in layoutManager.sliceViewNames():
+                sliceWidget = layoutManager.sliceWidget(name)
+                sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
 
+                currentItemIndex = sequenceBrowserNode.GetSelectedItemNumber()
+                currentLabelNode = deformedMaskSequenceNode.GetDataNodeAtValue(str(currentItemIndex))
 
-    self.customParamNode.EndModify(wasModified)
+                if currentLabelNode:
+                    sliceCompositeNode.SetLabelVolumeID(currentLabelNode.GetID())
+                    sliceCompositeNode.SetLabelOpacity(self.customParamNode.opacity)
+                    sliceWidget.mrmlSliceNode().SetUseLabelOutline(self.customParamNode.overlayAsOutline)
+
+            self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+
+            # Register sequence browser (for playback control in the UI)
+            self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
+
+            # Done—reset visuals to show new playback
+            self.resetVisuals()
+
+            self.updateGUIFromParameterNode()
+
+            self.logic.visualize(
+        sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+        sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+        segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+        sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
+        opacity=self.customParamNode.opacity,
+        overlayAsOutline=self.customParamNode.overlayAsOutline,
+        overlayThickness=self.customParamNode.overlayThickness,
+        show=False,
+        customParamNode=self.customParamNode,
+        deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+        transformType="Deformation Field"
+    )
+
+    finally:
+      self.customParamNode.EndModify(wasModified)
+      self._updatingGUIFromParameterNode = False
+      self.updateGUIFromParameterNode()  # refresh UI now that loading is done
+
   def onTransformsFilePathChange(self):
     
     #TODO - Move these helper functions to another module
@@ -2096,13 +2101,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       selectedFiles = fileDialog.selectedFiles()
       selectedFiles = sorted(list(selectedFiles))
       self.selector2DImagesFiles.addPaths(selectedFiles)
-      self.updateParameterNodeFromGUI("selector2DImagesFiles", "pathsChanged")
 
   def onDeleteImagesButton(self):
     # Removes the cine images from the multi file selector
     self.selector2DImagesFiles.clear()
     self.customParamNode.files2DImages = []
-    self.updateParameterNodeFromGUI("selector2DImagesFiles", "pathsChanged")
 
   def onOverlayThicknessChange(self):
     # Allows the user to adjust the thickness of the overlay
