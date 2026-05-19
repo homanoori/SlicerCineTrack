@@ -1315,7 +1315,33 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                               
         if caller == "applyTransformsButton" and event == "clicked":
 
-          if self.transformTypeDropdown.currentText == "Translation":
+          hasSegmentation = bool(self.customParamNode.path3DSegmentation)
+          if not hasSegmentation:
+            # Create a sequence browser and register only the image sequence.
+            # No transforms, no label maps needed.
+            sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLSequenceBrowserNode", "Sequence Browser")
+            sequenceBrowserNode.AddSynchronizedSequenceNode(
+                self.customParamNode.sequenceNode2DImages)
+
+            # Observe the browser so the frame counter / slider stay in sync
+            self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent,
+                             self.updateGUIFromParameterNode)
+
+            # Store it so the rest of the UI knows playback is ready
+            self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
+
+            # Clean up any leftover browser node from a previous Apply press
+            nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
+            nodes.UnRegister(None)
+            if nodes.GetNumberOfItems() == 2:
+              oldBrowser = nodes.GetItemAsObject(0)
+              slicer.mrmlScene.RemoveNode(oldBrowser)
+
+            # Show first frame and reset playback controls
+            self.resetVisuals()
+
+          elif self.transformTypeDropdown.currentText == "Translation":
 
 
             # Set a param to hold the path to the transformations .csv file
