@@ -1508,6 +1508,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     volumeNode.SetIJKToRASDirectionMatrix(vtkMatrix)
                     
                     deformedMaskSequenceNode.SetDataNodeAtValue(volumeNode, str(i))
+                    # Clean up: remove the standalone node from the scene now that it's stored in the sequence
+                    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+                    itemID = shNode.GetItemByDataNode(volumeNode)
+                    if itemID:
+                        shNode.RemoveItem(itemID)
 
                 except Exception as e:
                     slicer.util.errorDisplay(f"Failed to apply deformation field to mask {i}: {e}")
@@ -1557,7 +1562,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         show=False,
         customParamNode=self.customParamNode,
         deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-        transformType="Deformation Field"
+        transformType="Displacement Field"
     )
 
     finally:

@@ -438,7 +438,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     # The proxy image node represents the current selected image within the sequence
     proxy2DImageNode = sequenceBrowser.GetProxyNode(sequenceNode2DImages)
     # The proxy transform node represents the current selected transform within the sequence
-    proxyTransformNode = sequenceBrowser.GetProxyNode(sequenceNodeTransforms)
+    proxyTransformNode = sequenceBrowser.GetProxyNode(sequenceNodeTransforms) if sequenceNodeTransforms else None
     labelMapNode = shNode.GetItemDataNode(segmentationLabelMapID)
 
     displayNode = labelMapNode.GetDisplayNode()
