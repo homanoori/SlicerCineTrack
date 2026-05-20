@@ -1640,7 +1640,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # In images-only mode, visualizeImagesOnly handles all views uniformly
     # Not letting onPlayButton touch individual slice views to fix the disconnected playback on the red
     if not hasSegmentation and not hasTransforms:
-        self.customParamNode.sequenceBrowserNode.SetPlaybackActive(True)
+        if self.customParamNode.sequenceBrowserNode.GetPlaybackActive():
+            # pause
+            self.customParamNode.sequenceBrowserNode.SetPlaybackActive(False)
+        else:
+            # play
+            self.customParamNode.sequenceBrowserNode.SetPlaybackActive(True)
         return
     layoutManager = slicer.app.layoutManager()
     self.customParamNode.sequenceBrowserNode.SetPlaybackItemSkippingEnabled(False) # Fixes image skipping bug on slower machines
