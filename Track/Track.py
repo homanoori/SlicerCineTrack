@@ -658,8 +658,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
 
 
-    
-
+    # Initialize deformation field paths list
+    self.deformationFieldPaths = []
     #
     # End logic
     #
@@ -2667,15 +2667,25 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
       # center 3D images on segmentation
       if self.customParamNode.sequenceNode2DImages.GetDataNodeAtValue("0").GetImageData().GetDataDimension() == 3:
-        labelmap = slicer.mrmlScene.GetNodesByClass('vtkMRMLLabelMapVolumeNode').GetItemAsObject(0)
-        seg = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLSegmentationNode')
-        slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(labelmap, seg)
-        center = seg.GetSegmentCenterRAS(seg.GetSegmentation().GetNthSegmentID(0))
-        slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(seg, labelmap)
-        slicer.mrmlScene.RemoveNode(seg)
+        shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+        labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
+        
+        # find center in IJK (voxel) space using only non-zero voxels
+        labelArray = arrayFromVolume(labelMapNode)
+        nonZeroIndices = np.argwhere(labelArray != 0)
+        centerIJK = nonZeroIndices.mean(axis=0)  # [k, j, i] — numpy is z,y,x order
+        
+        # convert IJK center to RAS world coordinates
+        ijkToRAS = vtk.vtkMatrix4x4()
+        labelMapNode.GetIJKToRASMatrix(ijkToRAS)
+        # IJK is [k,j,i] in numpy but [i,j,k,1] for matrix multiply, so reverse and add homogeneous coord
+        ijkPoint = [centerIJK[2], centerIJK[1], centerIJK[0], 1]
+        rasPoint = ijkToRAS.MultiplyPoint(ijkPoint)
+        
+        # jump all slice views to that RAS point
         for name in layoutManager.sliceViewNames():
           sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
-          sliceNode.JumpSlice(center[0], center[1], center[2])
+          sliceNode.JumpSlice(rasPoint[0], rasPoint[1], rasPoint[2])
     
     # Images alone are enough to enable Apply
     inputsProvided = bool(self.customParamNode.sequenceNode2DImages)

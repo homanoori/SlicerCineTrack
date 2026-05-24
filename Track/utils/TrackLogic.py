@@ -523,10 +523,10 @@ class TrackLogic(ScriptedLoadableModuleLogic):
               
             # UPDATE COLOUR
             volumeRenderingLogic = slicer.modules.volumerendering.logic()
-            volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(segmentationNode)
+            volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(labelMapNode)
 
             if volumeRenderingDisplayNode is None:
-                volumeRenderingDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(segmentationNode)
+                volumeRenderingDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(labelMapNode)
 
             # Toggle visibility to force Slicer to re-sync transfer functions from the updated color node
             volumeRenderingDisplayNode.SetVisibility(False)
