@@ -1464,106 +1464,126 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
           #Deformation Field
           else:
-            if len(self.deformationFieldPaths) != self.customParamNode.totalImages:
+            if len(self.deformationFieldPaths) > 0 and len(self.deformationFieldPaths) != self.customParamNode.totalImages:
                 slicer.util.errorDisplay("Number of deformation field files must match number of cine images.", "Input Error")
                 return
+            # No DVFs provided — just play images with static segmentation overlay
+            elif len(self.deformationFieldPaths) == 0:
+                sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
+                sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
+                sequenceBrowserNode.SetSelectedItemNumber(0)
+                sequenceBrowserNode.SetPlaybackRateFps(10)
 
-            # Create the SequenceNode to store the masks
-            deformedMaskSequenceNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceNode", "Deformed Mask Sequence")
-            self.customParamNode.deformedMaskSequenceNode = deformedMaskSequenceNode
+                self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+                self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
+                self.resetVisuals()
+                self.updateGUIFromParameterNode()
+                self.logic.visualize(
+                    sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+                    sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+                    segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+                    sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
+                    opacity=self.customParamNode.opacity,
+                    overlayAsOutline=self.customParamNode.overlayAsOutline,
+                    overlayThickness=self.customParamNode.overlayThickness,
+                    show=False,
+                    customParamNode=self.customParamNode,
+                    deformedMaskSequenceNode=None,
+                    transformType="Displacement Field"
+                )
+                return
 
-            mask = sitk.ReadImage(self.customParamNode.path3DSegmentation)
+            else: 
+              # Create the SequenceNode to store the masks
+              deformedMaskSequenceNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceNode", "Deformed Mask Sequence")
+              self.customParamNode.deformedMaskSequenceNode = deformedMaskSequenceNode
 
-            for i, path in enumerate(self.deformationFieldPaths):
-                try:
-                    print(f"Frame {i} — Reading transform from: {path}")
-                    tx = sitk.ReadTransform(path)
+              mask = sitk.ReadImage(self.customParamNode.path3DSegmentation)
 
-                    #toDisplacementFilter = sitk.TransformToDisplacementFieldFilter()
-                    #toDisplacementFilter.SetReferenceImage(mask)
-                    #displacementField = toDisplacementFilter.Execute(tx)
+              for i, path in enumerate(self.deformationFieldPaths):
+                  try:
+                      print(f"Frame {i} — Reading transform from: {path}")
+                      tx = sitk.ReadTransform(path)
+                      deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
 
-                    #tx = sitk.DisplacementFieldTransform(displacementField)
-                    deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
+                      print(f"DeformedMask[{i}] unique values:", np.unique(sitk.GetArrayFromImage(deformedMask)))
 
-                    print(f"DeformedMask[{i}] unique values:", np.unique(sitk.GetArrayFromImage(deformedMask)))
+                      # Create volume node directly in memory without saving to disk
+                      volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"DeformedMask_{i}")
+                      
+                      # Convert SimpleITK image to numpy array and update the volume node
+                      deformedMaskArray = sitk.GetArrayFromImage(deformedMask)
+                      slicer.util.updateVolumeFromArray(volumeNode, deformedMaskArray)
+                      
+                      # Copy the image properties from the original mask
+                      volumeNode.SetOrigin(mask.GetOrigin())
+                      volumeNode.SetSpacing(mask.GetSpacing())
+                      
+                      # Set the image direction
+                      direction = mask.GetDirection()
+                      vtkMatrix = vtk.vtkMatrix4x4()
+                      for row in range(3):
+                          for col in range(3):
+                              vtkMatrix.SetElement(row, col, direction[row * 3 + col])
+                      volumeNode.SetIJKToRASDirectionMatrix(vtkMatrix)
+                      
+                      deformedMaskSequenceNode.SetDataNodeAtValue(volumeNode, str(i))
+                      # Clean up: remove the standalone node from the scene now that it's stored in the sequence
+                      shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+                      itemID = shNode.GetItemByDataNode(volumeNode)
+                      if itemID:
+                          shNode.RemoveItem(itemID)
 
-                    # Create volume node directly in memory without saving to disk
-                    volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"DeformedMask_{i}")
-                    
-                    # Convert SimpleITK image to numpy array and update the volume node
-                    deformedMaskArray = sitk.GetArrayFromImage(deformedMask)
-                    slicer.util.updateVolumeFromArray(volumeNode, deformedMaskArray)
-                    
-                    # Copy the image properties from the original mask
-                    volumeNode.SetOrigin(mask.GetOrigin())
-                    volumeNode.SetSpacing(mask.GetSpacing())
-                    
-                    # Set the image direction
-                    direction = mask.GetDirection()
-                    vtkMatrix = vtk.vtkMatrix4x4()
-                    for row in range(3):
-                        for col in range(3):
-                            vtkMatrix.SetElement(row, col, direction[row * 3 + col])
-                    volumeNode.SetIJKToRASDirectionMatrix(vtkMatrix)
-                    
-                    deformedMaskSequenceNode.SetDataNodeAtValue(volumeNode, str(i))
-                    # Clean up: remove the standalone node from the scene now that it's stored in the sequence
-                    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-                    itemID = shNode.GetItemByDataNode(volumeNode)
-                    if itemID:
-                        shNode.RemoveItem(itemID)
+                  except Exception as e:
+                      slicer.util.errorDisplay(f"Failed to apply deformation field to mask {i}: {e}")
+                      return
 
-                except Exception as e:
-                    slicer.util.errorDisplay(f"Failed to apply deformation field to mask {i}: {e}")
-                    return
+              # Playback setup
+              sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
+              sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
+              sequenceBrowserNode.AddSynchronizedSequenceNode(deformedMaskSequenceNode)
 
-            # Playback setup
-            sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
-            sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
-            sequenceBrowserNode.AddSynchronizedSequenceNode(deformedMaskSequenceNode)
+              sequenceBrowserNode.SetRecording(deformedMaskSequenceNode, False)
+              sequenceBrowserNode.SetPlayback(deformedMaskSequenceNode, True)
+              sequenceBrowserNode.SetSelectedItemNumber(0)
+              sequenceBrowserNode.SetPlaybackRateFps(10)
 
-            sequenceBrowserNode.SetRecording(deformedMaskSequenceNode, False)
-            sequenceBrowserNode.SetPlayback(deformedMaskSequenceNode, True)
-            sequenceBrowserNode.SetSelectedItemNumber(0)
-            sequenceBrowserNode.SetPlaybackRateFps(10)
+              layoutManager = slicer.app.layoutManager()
+              for name in layoutManager.sliceViewNames():
+                  sliceWidget = layoutManager.sliceWidget(name)
+                  sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
 
-            layoutManager = slicer.app.layoutManager()
-            for name in layoutManager.sliceViewNames():
-                sliceWidget = layoutManager.sliceWidget(name)
-                sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+                  currentItemIndex = sequenceBrowserNode.GetSelectedItemNumber()
+                  currentLabelNode = deformedMaskSequenceNode.GetDataNodeAtValue(str(currentItemIndex))
 
-                currentItemIndex = sequenceBrowserNode.GetSelectedItemNumber()
-                currentLabelNode = deformedMaskSequenceNode.GetDataNodeAtValue(str(currentItemIndex))
+                  if currentLabelNode:
+                      sliceCompositeNode.SetLabelVolumeID(currentLabelNode.GetID())
+                      sliceCompositeNode.SetLabelOpacity(self.customParamNode.opacity)
+                      sliceWidget.mrmlSliceNode().SetUseLabelOutline(self.customParamNode.overlayAsOutline)
 
-                if currentLabelNode:
-                    sliceCompositeNode.SetLabelVolumeID(currentLabelNode.GetID())
-                    sliceCompositeNode.SetLabelOpacity(self.customParamNode.opacity)
-                    sliceWidget.mrmlSliceNode().SetUseLabelOutline(self.customParamNode.overlayAsOutline)
+              self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
 
-            self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+              # Register sequence browser (for playback control in the UI)
+              self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
 
-            # Register sequence browser (for playback control in the UI)
-            self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
+              # Done—reset visuals to show new playback
+              self.resetVisuals()
 
-            # Done—reset visuals to show new playback
-            self.resetVisuals()
+              self.updateGUIFromParameterNode()
 
-            self.updateGUIFromParameterNode()
-
-            self.logic.visualize(
-        sequenceBrowser=self.customParamNode.sequenceBrowserNode,
-        sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
-        segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
-        sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
-        opacity=self.customParamNode.opacity,
-        overlayAsOutline=self.customParamNode.overlayAsOutline,
-        overlayThickness=self.customParamNode.overlayThickness,
-        show=False,
-        customParamNode=self.customParamNode,
-        deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-        transformType="Displacement Field"
-    )
+              self.logic.visualize(
+          sequenceBrowser=self.customParamNode.sequenceBrowserNode,
+          sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
+          segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
+          sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
+          opacity=self.customParamNode.opacity,
+          overlayAsOutline=self.customParamNode.overlayAsOutline,
+          overlayThickness=self.customParamNode.overlayThickness,
+          show=False,
+          customParamNode=self.customParamNode,
+          deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
+          transformType="Displacement Field"
+      )
 
     finally:
       self.customParamNode.EndModify(wasModified)
