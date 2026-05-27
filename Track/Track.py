@@ -1571,20 +1571,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
               self.updateGUIFromParameterNode()
 
-              self.logic.visualize(
-          sequenceBrowser=self.customParamNode.sequenceBrowserNode,
-          sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
-          segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
-          sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
-          opacity=self.customParamNode.opacity,
-          overlayAsOutline=self.customParamNode.overlayAsOutline,
-          overlayThickness=self.customParamNode.overlayThickness,
-          show=False,
-          customParamNode=self.customParamNode,
-          deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-          transformType="Displacement Field"
-      )
-
     finally:
       self.customParamNode.EndModify(wasModified)
       self._updatingGUIFromParameterNode = False
@@ -2642,7 +2628,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # After the visual reset we also want to setup our slice views for playback if all three
     # inputs have been provided
     inputsProvided = self.customParamNode.sequenceNode2DImages and \
-                     self.customParamNode.sequenceNodeTransforms and \
+                     (self.customParamNode.sequenceNodeTransforms or self.customParamNode.deformedMaskSequenceNode) and \
                      self.customParamNode.node3DSegmentation
     if inputsProvided and reset:
       # Reset the Sequence back to the first image
@@ -2679,7 +2665,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             sequenceBrowser=self.customParamNode.sequenceBrowserNode,
             sequenceNode2DImages=self.customParamNode.sequenceNode2DImages
         )
-            # Test: change view to center
+            # change view to center
       layoutManager = slicer.app.layoutManager()
       for name in layoutManager.sliceViewNames():
           layoutManager.sliceWidget(name).fitSliceToBackground()
