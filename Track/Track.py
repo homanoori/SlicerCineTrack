@@ -1434,9 +1434,26 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                       slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
                       slicer.mrmlScene.RemoveNode(node)
                 self.overlayThicknessSlider.enabled = True
+                # Build the orientation map once before any visualize() calls.
+                # This permanently assigns each orientation to a view for this session.
+                layoutManager = slicer.app.layoutManager()
+                self.logic.buildOrientationMap(
+                    self.customParamNode.sequenceBrowserNode,
+                    self.customParamNode.sequenceNode2DImages,
+                    layoutManager
+                )
+
 
                 # Load first image of the sequence when all required inputs are satisfied
                 self.resetVisuals()
+                shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+                originalSegNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentation)
+                # For 2D images, visualize() already jumps to the correct image depth.
+                # centerOnSeg would overwrite that jump, so we skip it here.
+                proxy2DImageNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(self.customParamNode.sequenceNode2DImages)
+                if proxy2DImageNode.GetImageData().GetDataDimension() != 2:
+                    self.logic.centerOnSeg(originalSegNode)
+                
                 
             else:
               # If the user inputted file in the Tranforms File input is not accepted, remove the nodes created
@@ -1467,30 +1484,48 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             if len(self.deformationFieldPaths) > 0 and len(self.deformationFieldPaths) != self.customParamNode.totalImages:
                 slicer.util.errorDisplay("Number of deformation field files must match number of cine images.", "Input Error")
                 return
-            # No DVFs provided — just play images with static segmentation overlay
+            # No DVFs provided — use identity transforms so the static segmentation
+            # is displayed identically to Translation mode with no CSV file.
             elif len(self.deformationFieldPaths) == 0:
+                numImages = self.customParamNode.totalImages
+                transformsList = [[0.0, 0.0, 0.0] for _ in range(numImages)]
+                transformsSequenceNode = self.logic.createTransformNodesFromTransformData(
+                    shNode, transformsList, numImages
+                )
+                if not transformsSequenceNode:
+                    return
+                self.customParamNode.sequenceNodeTransforms = transformsSequenceNode
+
                 sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
                 sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
+                sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNodeTransforms)
                 sequenceBrowserNode.SetSelectedItemNumber(0)
                 sequenceBrowserNode.SetPlaybackRateFps(10)
 
                 self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
                 self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
-                self.resetVisuals()
-                self.updateGUIFromParameterNode()
-                self.logic.visualize(
-                    sequenceBrowser=self.customParamNode.sequenceBrowserNode,
-                    sequenceNode2DImages=self.customParamNode.sequenceNode2DImages,
-                    segmentationLabelMapID=self.customParamNode.node3DSegmentationLabelMap,
-                    sequenceNodeTransforms=self.customParamNode.sequenceNodeTransforms,  # This is still required by the function signature
-                    opacity=self.customParamNode.opacity,
-                    overlayAsOutline=self.customParamNode.overlayAsOutline,
-                    overlayThickness=self.customParamNode.overlayThickness,
-                    show=False,
-                    customParamNode=self.customParamNode,
-                    deformedMaskSequenceNode=None,
-                    transformType="Displacement Field"
+
+                # Clean up any leftover browser node from a previous Apply press
+                nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
+                nodes.UnRegister(None)
+                if nodes.GetNumberOfItems() == 2:
+                    oldBrowser = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(oldBrowser)
+
+                self.overlayThicknessSlider.enabled = True
+                layoutManager = slicer.app.layoutManager()
+                self.logic.buildOrientationMap(
+                    self.customParamNode.sequenceBrowserNode,
+                    self.customParamNode.sequenceNode2DImages,
+                    layoutManager
                 )
+                # resetVisuals() calls visualize() internally — no second call needed
+                self.resetVisuals()
+                shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+                originalSegNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentation)
+                proxy2DImageNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(self.customParamNode.sequenceNode2DImages)
+                if proxy2DImageNode.GetImageData().GetDataDimension() != 2:
+                    self.logic.centerOnSeg(originalSegNode)
                 return
 
             else: 
@@ -1502,11 +1537,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
               for i, path in enumerate(self.deformationFieldPaths):
                   try:
-                      print(f"Frame {i} — Reading transform from: {path}")
                       tx = sitk.ReadTransform(path)
                       deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
-
-                      print(f"DeformedMask[{i}] unique values:", np.unique(sitk.GetArrayFromImage(deformedMask)))
 
                       # Create volume node directly in memory without saving to disk
                       volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"DeformedMask_{i}")
@@ -2213,9 +2245,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     dialog.exec()
       
   def onResetButton(self):
-    print("Resetting the sequence browser to the first image")
-    
- 
     """
     Hard reset of UI + visuals without triggering Apply.
     Also removes all dynamically-created color selection buttons.
@@ -2272,6 +2301,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # 4) Wipe  state so next run is clean
     if self.customParamNode:
         self.customParamNode.files2DImages = []
+        self.deformationFieldPaths = []
         self.customParamNode.totalImages = 0
         self.customParamNode.path3DSegmentation = ""
         self.customParamNode.node3DSegmentation = 0
@@ -2665,33 +2695,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             sequenceBrowser=self.customParamNode.sequenceBrowserNode,
             sequenceNode2DImages=self.customParamNode.sequenceNode2DImages
         )
-            # change view to center
-      layoutManager = slicer.app.layoutManager()
-      for name in layoutManager.sliceViewNames():
-          layoutManager.sliceWidget(name).fitSliceToBackground()
-      slicer.app.processEvents()
-
-      # center 3D images on segmentation
-      if self.customParamNode.sequenceNode2DImages.GetDataNodeAtValue("0").GetImageData().GetDataDimension() == 3:
-        shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-        labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
-        
-        # find center in IJK (voxel) space using only non-zero voxels
-        labelArray = arrayFromVolume(labelMapNode)
-        nonZeroIndices = np.argwhere(labelArray != 0)
-        centerIJK = nonZeroIndices.mean(axis=0)  # [k, j, i] — numpy is z,y,x order
-        
-        # convert IJK center to RAS world coordinates
-        ijkToRAS = vtk.vtkMatrix4x4()
-        labelMapNode.GetIJKToRASMatrix(ijkToRAS)
-        # IJK is [k,j,i] in numpy but [i,j,k,1] for matrix multiply, so reverse and add homogeneous coord
-        ijkPoint = [centerIJK[2], centerIJK[1], centerIJK[0], 1]
-        rasPoint = ijkToRAS.MultiplyPoint(ijkPoint)
-        
-        # jump all slice views to that RAS point
-        for name in layoutManager.sliceViewNames():
-          sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
-          sliceNode.JumpSlice(rasPoint[0], rasPoint[1], rasPoint[2])
     
     # Images alone are enough to enable Apply
     inputsProvided = bool(self.customParamNode.sequenceNode2DImages)

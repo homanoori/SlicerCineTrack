@@ -1,7 +1,8 @@
 import slicer
-# from slicer import ScriptedLoadableModuleLogic
 from slicer.ScriptedLoadableModule import *
+from slicer.util import arrayFromVolume
 import qt, vtk, ctk
+import numpy as np
 
 import os, csv, re
 import SimpleITK as sitk
@@ -32,7 +33,52 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       "Green": self.greenBackground,
       "Yellow": self.yellowBackground
     }
+    self.orientationToView = {}  # maps orientation string → view name, built once at Apply time
+  
+  def buildOrientationMap(self, sequenceBrowserNode, sequenceNode2DImages, layoutManager):
+    """
+    Scans every image in the sequence once and builds a permanent map of
+    orientation → view name. This runs once at Apply time, never per frame.
+    Example result: {"Sagittal": "Yellow", "Coronal": "Green"}
+    """
+    self.orientationToView = {}
+    totalItems = sequenceNode2DImages.GetNumberOfDataNodes()
 
+    for i in range(totalItems):
+      sequenceBrowserNode.SetSelectedItemNumber(i)
+      imageNode = sequenceBrowserNode.GetProxyNode(sequenceNode2DImages)
+      if imageNode is None:
+        continue
+
+      # Compute orientation the same way getSliceWidget does
+      tmpMatrix = vtk.vtkMatrix4x4()
+      imageNode.GetIJKToRASMatrix(tmpMatrix)
+      scanOrder = imageNode.ComputeScanOrderFromIJKToRAS(tmpMatrix)
+
+      if scanOrder in ("LR", "RL"):
+        orientation = "Sagittal"
+      elif scanOrder in ("AP", "PA"):
+        orientation = "Coronal"
+      elif scanOrder in ("IS", "SI"):
+        orientation = "Axial"
+      else:
+        print(f"buildOrientationMap: unrecognized scanOrder {scanOrder} at frame {i}, skipping.")
+        continue
+
+      # Only record the first image of each orientation — the view assignment never changes
+      if orientation not in self.orientationToView:
+        for viewName in layoutManager.sliceViewNames():
+          widget = layoutManager.sliceWidget(viewName)
+          if widget.sliceOrientation == orientation:
+            self.orientationToView[orientation] = viewName
+            print(f"buildOrientationMap: {orientation} → {viewName}")
+            break
+
+    # Reset back to frame 0 after scanning
+    sequenceBrowserNode.SetSelectedItemNumber(0)
+    print(f"Orientation map built: {self.orientationToView}")
+
+    
   def setDefaultParameters(self, customParameterNode):
     """
     Initialize parameter node with default settings.
@@ -329,7 +375,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
                            "Validation Error")
         
         return None
-
+  
   def createTransformNodesFromTransformData(self, shNode, transforms, numImages):
     """
     For every image and it's matching transformation, create a transform node which will hold
@@ -503,6 +549,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
                     labelMapNode.SetAndObserveTransformNodeID(None)
         
         sliceNode.SetSliceVisible(True)
+        # Jump this slice view to the depth where the 2D image actually lives in RAS space.
+        # GetOrigin() returns the RAS position of voxel [0,0,0] — any point on the image plane
+        # has the same depth, so the origin is all we need.
+        origin = proxy2DImageNode.GetOrigin()
+        sliceNode.JumpSlice(origin[0], origin[1], origin[2])
 
       # Make the 3D segmentation visible in the 3D view
       tmpIdList = vtk.vtkIdList() # The nodes you want to display need to be in a vtkIdList
@@ -585,22 +636,61 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       if name is not None:
         currentSlice = getattr(self, name.lower() + 'Background')
         currentSlice.SetName(proxy2DImageNode.GetAttribute('Sequences.BaseName'))
-
-      # Set the background volumes for each orientation, if they exist
+      
+      # Update only the matching view for this frame's image.
+      # All other views are left untouched — they keep their last frame,
+      # which is what lets you see continuous motion in each orientation's view.
       for color in self.backgrounds:
+        compositeNode = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}")
         sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-        sliceViewWindow.cornerAnnotation().RemoveAllObservers()
-        currentSlice = getattr(self, color.lower() + 'Background')
-        sliceViewWindow.cornerAnnotation().ClearAllTexts()
-        # Add desired text to slice views that have a background node
-        if currentSlice is not None:
-          slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").SetBackgroundVolumeID(currentSlice.GetID())
-          imageFile = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume') is not None
-          if imageFile:
-            imageFileNameText = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume').GetAttribute('Sequences.BaseName')
-            # Place "Current Alignment" text in the slice view corner
-            sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-            sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
+
+        if color == name:  # this is the view that owns this orientation
+          currentSlice = getattr(self, color.lower() + 'Background')
+          if currentSlice is not None:
+            compositeNode.SetBackgroundVolumeID(currentSlice.GetID())
+            compositeNode.SetLabelVolumeID(labelMapNode.GetID())
+            sliceViewWindow.cornerAnnotation().ClearAllTexts()
+            imageFileNameText = currentSlice.GetAttribute('Sequences.BaseName')
+            if imageFileNameText:
+              sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
+        # other views: do nothing — keep their last frame
+      # For a 2D image, only the matching view should show the image and overlay.
+      # All other views are cleared — showing a 2D axial image in a sagittal or
+      # coronal view makes no anatomical sense and produces a misleading display.
+      # for color in self.backgrounds:
+      #   sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
+      #   sliceViewWindow.cornerAnnotation().RemoveAllObservers()
+      #   sliceViewWindow.cornerAnnotation().ClearAllTexts()
+      #   compositeNode = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}")
+
+      #   if color == name:  # NEW — this is the matching view
+      #     currentSlice = getattr(self, color.lower() + 'Background')
+      #     if currentSlice is not None:
+      #       compositeNode.SetBackgroundVolumeID(currentSlice.GetID())
+      #       compositeNode.SetLabelVolumeID(labelMapNode.GetID())  # NEW — label on matching view
+      #       imageFileNameText = currentSlice.GetAttribute('Sequences.BaseName')
+      #       if imageFileNameText:
+      #         sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
+      #   else:  # NEW — all other views: clear image and label
+      #     compositeNode.SetBackgroundVolumeID(None)  # NEW
+      #     compositeNode.SetLabelVolumeID(None)        # NEW
+
+      #----------------------------------------------------------------
+      # # Set the background volumes for each orientation, if they exist
+      # for color in self.backgrounds:
+      #   sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
+      #   sliceViewWindow.cornerAnnotation().RemoveAllObservers()
+      #   currentSlice = getattr(self, color.lower() + 'Background')
+      #   sliceViewWindow.cornerAnnotation().ClearAllTexts()
+      #   # Add desired text to slice views that have a background node
+      #   if currentSlice is not None:
+      #     slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").SetBackgroundVolumeID(currentSlice.GetID())
+      #     imageFile = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume') is not None
+      #     if imageFile:
+      #       imageFileNameText = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume').GetAttribute('Sequences.BaseName')
+      #       # Place "Current Alignment" text in the slice view corner
+      #       sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
+      #       sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
       
       for color in self.backgrounds:
         sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
@@ -857,6 +947,39 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
     slicer.util.forceRenderAllViews()
     slicer.app.processEvents()
+
+  def centerOnSeg(self, originalSegNode):
+    """
+    Centers all slice views on the centroid of the segmentation mask.
+    Call this after all visualization is complete.
+    """
+    try:
+        # Read the segmentation volume as a numpy array
+        labelArray = arrayFromVolume(originalSegNode)
+        # Find all voxels that belong to the segmentation (non-zero values)
+        nonZeroIndices = np.argwhere(labelArray != 0)
+        #If no segmentation voxels exist, there is nothing to center on
+        if len(nonZeroIndices) == 0:
+            print("centerOnSeg: no non-zero voxels found, skipping.")
+            return
+        # Compute the average position of all segmentation voxels
+        centerIJK = nonZeroIndices.mean(axis=0) 
+
+        # Get the matrix that converts IJK voxel coordinates to RAS world coordinates
+        # RAS is the coordinate system Slicer uses for physical space (in mm)
+        ijkToRAS = vtk.vtkMatrix4x4()
+        originalSegNode.GetIJKToRASMatrix(ijkToRAS)
+        ijkPoint = [centerIJK[2], centerIJK[1], centerIJK[0], 1]
+        rasPoint = ijkToRAS.MultiplyPoint(ijkPoint)
+
+        # Move all slice views to the computed RAS point
+        layoutManager = slicer.app.layoutManager()
+        for name in layoutManager.sliceViewNames():
+            sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
+            sliceNode.JumpSlice(rasPoint[0], rasPoint[1], rasPoint[2])
+
+    except Exception as e:
+        print(f"centerOnSeg failed: {e}")
   
   def getSliceWidget(self, layoutManager, imageNode):
     """
