@@ -287,7 +287,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.deleteDeformationFilesButton.hide()
     self.deformationFieldLabel.hide()
 
-    self.transformTypeDropdown.currentTextChanged.connect(self.onTransformTypeChanged)
 
 
 

@@ -467,7 +467,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
   def visualize(self, sequenceBrowser, sequenceNode2DImages, segmentationLabelMapID,
               sequenceNodeTransforms, opacity, overlayAsOutline, overlayThickness,
               show=False, customParamNode=None, deformedMaskSequenceNode=None, transformType="Translation"):
-
     """
     Visualizes the image data (2D images and 3D segmentation overlay) within the slice views and
     enables the alignment of the 3D segmentation label map according to the transformation data.
@@ -535,18 +534,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
         # Set the background volume for the current slice view
         sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
-
-        # Translate the 3D segmentation label map using the transform data
-        #test change
-        if transformType == "Translation":
-            if proxyTransformNode is not None:
-                labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
-        elif transformType == "Displacement Field":
-            if deformedMaskSequenceNode is not None:
-                proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
-                if proxyDeformedMaskNode is not None:
-                    labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
-                    labelMapNode.SetAndObserveTransformNodeID(None)
         
         sliceNode.SetSliceVisible(True)
         # Jump this slice view to the depth where the 2D image actually lives in RAS space.
@@ -653,44 +640,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
             imageFileNameText = currentSlice.GetAttribute('Sequences.BaseName')
             if imageFileNameText:
               sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
-        # other views: do nothing — keep their last frame
-      # For a 2D image, only the matching view should show the image and overlay.
-      # All other views are cleared — showing a 2D axial image in a sagittal or
-      # coronal view makes no anatomical sense and produces a misleading display.
-      # for color in self.backgrounds:
-      #   sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-      #   sliceViewWindow.cornerAnnotation().RemoveAllObservers()
-      #   sliceViewWindow.cornerAnnotation().ClearAllTexts()
-      #   compositeNode = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}")
 
-      #   if color == name:  # NEW — this is the matching view
-      #     currentSlice = getattr(self, color.lower() + 'Background')
-      #     if currentSlice is not None:
-      #       compositeNode.SetBackgroundVolumeID(currentSlice.GetID())
-      #       compositeNode.SetLabelVolumeID(labelMapNode.GetID())  # NEW — label on matching view
-      #       imageFileNameText = currentSlice.GetAttribute('Sequences.BaseName')
-      #       if imageFileNameText:
-      #         sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
-      #   else:  # NEW — all other views: clear image and label
-      #     compositeNode.SetBackgroundVolumeID(None)  # NEW
-      #     compositeNode.SetLabelVolumeID(None)        # NEW
-
-      #----------------------------------------------------------------
-      # # Set the background volumes for each orientation, if they exist
-      # for color in self.backgrounds:
-      #   sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-      #   sliceViewWindow.cornerAnnotation().RemoveAllObservers()
-      #   currentSlice = getattr(self, color.lower() + 'Background')
-      #   sliceViewWindow.cornerAnnotation().ClearAllTexts()
-      #   # Add desired text to slice views that have a background node
-      #   if currentSlice is not None:
-      #     slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").SetBackgroundVolumeID(currentSlice.GetID())
-      #     imageFile = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume') is not None
-      #     if imageFile:
-      #       imageFileNameText = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume').GetAttribute('Sequences.BaseName')
-      #       # Place "Current Alignment" text in the slice view corner
-      #       sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-      #       sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
       
       for color in self.backgrounds:
         sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
@@ -704,18 +654,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         if sliceWidget is not None:
           sliceView = sliceWidget.sliceView()
           sliceView.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft, "Current Alignment")
-      # Enable alignment of the 3D segmentation label map according to the transform data so that
-      # the 3D segmentation label map overlays upon the ROI of the 2D images
-      #test change
-      if transformType == "Translation":
-          if proxyTransformNode is not None:
-              labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
-      elif transformType == "Displacement Field":
-          if deformedMaskSequenceNode is not None:
-              proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
-              if proxyDeformedMaskNode is not None:
-                  labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
-                  labelMapNode.SetAndObserveTransformNodeID(None)
+      
+      self._applyTransformToLabelMap(
+          labelMapNode, transformType, proxyTransformNode,
+          sequenceBrowser, deformedMaskSequenceNode
+      )
 
 
       # Render changes
@@ -758,16 +701,10 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           # Set the background volume for the current slice view
           sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
 
-          # Translate the 3D segmentation label map using the transform data
-          if transformType == "Translation":
-              if proxyTransformNode is not None:
-                  labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
-          elif transformType == "Displacement Field":
-              if deformedMaskSequenceNode is not None:
-                  proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
-                  if proxyDeformedMaskNode is not None:
-                      labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
-                      labelMapNode.SetAndObserveTransformNodeID(None)
+          self._applyTransformToLabelMap(
+              labelMapNode, transformType, proxyTransformNode,
+              sequenceBrowser, deformedMaskSequenceNode
+          )
 
           
           sliceNode.SetSliceVisible(True)
@@ -879,7 +816,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
         # Enable alignment of the 3D segmentation label map according to the transform data so that
         # the 3D segmentation label map overlays upon the ROI of the 2D images
-        #test change
         if transformType == "Translation":
             if proxyTransformNode is not None:
                 labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
@@ -899,6 +835,26 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         labelMapNode.Modified()
         slicer.util.forceRenderAllViews()
         slicer.app.processEvents()
+
+  def _applyTransformToLabelMap(self, labelMapNode, transformType,
+                               proxyTransformNode, sequenceBrowser,
+                               deformedMaskSequenceNode):
+    """
+    Applies the appropriate transform to the label map node depending on the
+    transform type selected by the user.
+    For Translation: links the label map to the current proxy transform node.
+    For Displacement Field: directly updates the label map's image data from
+    the current deformed mask proxy node, and clears any transform link.
+    """
+    if transformType == "Translation":
+        if proxyTransformNode is not None:
+            labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
+    elif transformType == "Displacement Field":
+        if deformedMaskSequenceNode is not None:
+            proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
+            if proxyDeformedMaskNode is not None:
+                labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
+                labelMapNode.SetAndObserveTransformNodeID(None)
 
   def visualizeImagesOnly(self, sequenceBrowser, sequenceNode2DImages):
     """
@@ -1074,9 +1030,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     """
     sliceWidgets = []
     for name in layoutManager.sliceViewNames():
-      if layoutManager.sliceWidget(name).sliceOrientation == "Axial" or layoutManager.sliceWidget(name).sliceOrientation == "Sagittal" or layoutManager.sliceWidget(name).sliceOrientation == "Coronal":
-        sliceWidgets.append(layoutManager.sliceWidget(name))
-      else:
-        print(f"Error: A slice with the required orientations was not found.")
-        exit(1)
+        widget = layoutManager.sliceWidget(name)
+        if widget.sliceOrientation in ("Axial", "Sagittal", "Coronal"):
+            sliceWidgets.append(widget)
     return sliceWidgets
