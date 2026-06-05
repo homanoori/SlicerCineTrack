@@ -71,12 +71,10 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           widget = layoutManager.sliceWidget(viewName)
           if widget.sliceOrientation == orientation:
             self.orientationToView[orientation] = viewName
-            print(f"buildOrientationMap: {orientation} → {viewName}")
             break
 
     # Reset back to frame 0 after scanning
     sequenceBrowserNode.SetSelectedItemNumber(0)
-    print(f"Orientation map built: {self.orientationToView}")
 
     
   def setDefaultParameters(self, customParameterNode):
@@ -617,6 +615,12 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         else:
           # Background exists, just replace the data to represent the next image in the sequence
           background.SetAndObserveImageData(proxy2DImageNode.GetImageData())
+          # Sync background node geometry to current frame
+          background.SetOrigin(proxy2DImageNode.GetOrigin())
+          background.SetSpacing(proxy2DImageNode.GetSpacing())
+          ijkToRASMatrix = vtk.vtkMatrix4x4()
+          proxy2DImageNode.GetIJKToRASDirectionMatrix(ijkToRASMatrix)
+          background.SetIJKToRASDirectionMatrix(ijkToRASMatrix)
           background.SetAttribute("Sequences.BaseName", proxy2DImageNode.GetAttribute("Sequences.BaseName"))
       
       # Add the image name to the slice view background variable
