@@ -884,26 +884,32 @@ class TrackLogic(ScriptedLoadableModuleLogic):
             return
 
         sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
-        sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
-
         name = sliceWidget.sliceViewName
         volumesLogic = slicer.modules.volumes.logic()
         background = getattr(self, name.lower() + 'Background')
         if background is None:
-            setattr(self, name.lower() + 'Background',
-                    volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
-                                            proxy2DImageNode.GetAttribute('Sequences.BaseName')))
+            newBackground = volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
+                                    proxy2DImageNode.GetAttribute('Sequences.BaseName'))
+            setattr(self, name.lower() + 'Background', newBackground)
+            background = newBackground
         else:
             background.SetAndObserveImageData(imageData)
+            
+        sliceCompositeNode.SetBackgroundVolumeID(background.GetID())
+        sliceNode = sliceWidget.mrmlSliceNode()
+        origin = proxy2DImageNode.GetOrigin()
+        sliceNode.JumpSlice(origin[0], origin[1], origin[2])
+        sliceWidget.sliceLogic().FitSliceToAll()
 
     else:
         # 3D image — show in all slice views
         for name in layoutManager.sliceViewNames():
-            sliceWidget = layoutManager.sliceWidget(name)
-            if sliceWidget is None:
-                continue
-            sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
-            sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
+          sliceWidget = layoutManager.sliceWidget(name)
+          if sliceWidget is None:
+              continue
+          sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+          sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
+          sliceWidget.sliceLogic().FitSliceToAll()
 
     slicer.util.forceRenderAllViews()
     slicer.app.processEvents()
