@@ -1896,8 +1896,23 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 if labelValue >= colorNode.GetNumberOfColors():
                     colorNode.SetNumberOfColors(labelValue + 1)
 
-                # Set the new color
+                # Set the new color at the button label index
                 colorNode.SetColor(labelValue, f"Label {labelValue}", *rgb, 1.0)
+
+                # Also write to the actual voxel values in the volume
+                # because the slice view renderer looks up color by voxel value,
+                # not by button label index (e.g. voxels are 255 but button is label 1)
+                labelArray = slicer.util.arrayFromVolume(labelMapNode)
+                uniqueNonZero = sorted([int(l) for l in np.unique(labelArray) if l != 0])
+                voxelToButtonLabel = {voxelVal: idx + 1 for idx, voxelVal in enumerate(uniqueNonZero)}
+
+                for voxelVal, buttonLabel in voxelToButtonLabel.items():
+                    if buttonLabel == labelValue:
+                        # This voxel value corresponds to the button the user clicked
+                        # Write the new color at the voxel value index too
+                        if voxelVal >= colorNode.GetNumberOfColors():
+                            colorNode.SetNumberOfColors(voxelVal + 1)
+                        colorNode.SetColor(voxelVal, f"Label {voxelVal}", *rgb, 1.0)
 
                 displayNode.SetAndObserveColorNodeID(colorNode.GetID())
 
@@ -1927,53 +1942,45 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 if volumeRenderingDisplayNode:
                     volumePropertyNode = volumeRenderingDisplayNode.GetVolumePropertyNode()
                     if volumePropertyNode:
-                        # Create new transfer functions
-                        ctf = vtk.vtkColorTransferFunction()
-                        otf = vtk.vtkPiecewiseFunction()
-                        gtf = vtk.vtkPiecewiseFunction()  # Gradient opacity
+                        vtkVP = volumePropertyNode.GetVolumeProperty()
 
-                        # Get unique labels from the volume to know which labels actually exist
+                        # Get the EXISTING transfer functions and modify in place
+                        # (VTK ignores SetColor() if you pass a new object)
+                        ctf = vtkVP.GetRGBTransferFunction()
+                        otf = vtkVP.GetScalarOpacity()
+
+                        ctf.RemoveAllPoints()
+                        otf.RemoveAllPoints()
+
                         labelArray = slicer.util.arrayFromVolume(labelMapNode)
                         uniqueLabels = np.unique(labelArray)
-                        
-                        # Add background (transparent)
-                        ctf.AddRGBPoint(0, 0.0, 0.0, 0.0)  # black background
-                        otf.AddPoint(0, 0.0)  # completely transparent background
-                        gtf.AddPoint(0, 1.0)  # no gradient opacity effect for background
-                        
+
+                        # Build a mapping from actual voxel value → button label index
+                        # The button is always built counting from 1 (first organ = 1, second = 2, etc.)
+                        # But the voxel value in the file can be anything (1, 255, etc.)
+                        # Example: voxels [0, 255] → {255: 1}
+                        # Example: voxels [0, 1, 2, 3] → {1: 1, 2: 2, 3: 3}
+                        uniqueNonZero = sorted([int(l) for l in uniqueLabels if l != 0])
+                        voxelToButtonLabel = {voxelVal: idx + 1 for idx, voxelVal in enumerate(uniqueNonZero)}
+
+                        ctf.AddRGBPoint(0, 0.0, 0.0, 0.0)
+                        otf.AddPoint(0, 0.0)
+
                         for label in uniqueLabels:
-                            # Skip background (label 0) - already handled above
                             if label == 0:
                                 continue
-                                
                             labelInt = int(label)
-                            if labelInt < colorNode.GetNumberOfColors():
-                                rgba = [0, 0, 0, 0]
-                                colorNode.GetColor(labelInt, rgba)
-                                # Add color for this label
-                                ctf.AddRGBPoint(label, rgba[0], rgba[1], rgba[2])
-                                # Set full opacity for solid rendering
-                                otf.AddPoint(label, self.customParamNode.opacity)
-                                # Gradient opacity - set to 1.0 for solid rendering
-                                gtf.AddPoint(label, 1.0)
-                            else:
-                                # Use default color if not in color table
-                                ctf.AddRGBPoint(label, 1.0, 1.0, 1.0)  # white
-                                otf.AddPoint(label, self.customParamNode.opacity)
-                                gtf.AddPoint(label, 1.0)
 
-                        # Apply transfer functions to volume rendering
-                        volumePropertyNode.SetColor(ctf)
-                        volumePropertyNode.SetScalarOpacity(otf)
-                        volumePropertyNode.SetGradientOpacity(gtf)
-                        
-                        # Ensure solid rendering settings
-                        volumeProperty = volumePropertyNode.GetVolumeProperty()
-                        volumeProperty.SetInterpolationTypeToLinear()
-                        volumeProperty.ShadeOn()  # Enable shading for better 3D appearance
-                        volumeProperty.SetAmbient(0.3)
-                        volumeProperty.SetDiffuse(0.7)
-                        volumeProperty.SetSpecular(0.2)
+                            # Use the button label index to look up the color the user picked
+                            # This is the key fix: colorNode was updated at index 1 (button label),
+                            # not at index 255 (voxel value) — so we must look up by button label
+                            colorIdx = voxelToButtonLabel.get(labelInt, labelInt)
+
+                            rgba = [0.0, 0.0, 0.0, 0.0]
+                            if colorIdx < colorNode.GetNumberOfColors():
+                                colorNode.GetColor(colorIdx, rgba)
+                            ctf.AddRGBPoint(label, rgba[0], rgba[1], rgba[2])
+                            otf.AddPoint(label, self.customParamNode.opacity)
 
                         volumePropertyNode.Modified()
                         volumeRenderingDisplayNode.Modified()
@@ -1981,50 +1988,50 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     # Create volume rendering if it doesn't exist
                     volumeRenderingDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(labelMapNode)
                     if volumeRenderingDisplayNode:
-                        # Apply the same settings as above for new volume rendering node
                         volumePropertyNode = volumeRenderingDisplayNode.GetVolumePropertyNode()
                         if volumePropertyNode:
-                            ctf = vtk.vtkColorTransferFunction()
-                            otf = vtk.vtkPiecewiseFunction()
-                            gtf = vtk.vtkPiecewiseFunction()
+                            vtkVP = volumePropertyNode.GetVolumeProperty()
+
+                            # Modify existing CTF/OTF in place — VTK ignores SetColor() on a new object
+                            ctf = vtkVP.GetRGBTransferFunction()
+                            otf = vtkVP.GetScalarOpacity()
+
+                            ctf.RemoveAllPoints()
+                            otf.RemoveAllPoints()
 
                             labelArray = slicer.util.arrayFromVolume(labelMapNode)
                             uniqueLabels = np.unique(labelArray)
-                            
+
+                            # Build a mapping from actual voxel value → button label index
+                            # The button is always built counting from 1 (first organ = 1, second = 2, etc.)
+                            # But the voxel value in the file can be anything (1, 255, etc.)
+                            # Example: voxels [0, 255] → {255: 1}
+                            # Example: voxels [0, 1, 2, 3] → {1: 1, 2: 2, 3: 3}
+                            uniqueNonZero = sorted([int(l) for l in uniqueLabels if l != 0])
+                            voxelToButtonLabel = {voxelVal: idx + 1 for idx, voxelVal in enumerate(uniqueNonZero)}
+
                             ctf.AddRGBPoint(0, 0.0, 0.0, 0.0)
                             otf.AddPoint(0, 0.0)
-                            gtf.AddPoint(0, 1.0)
-                            
+
                             for label in uniqueLabels:
                                 if label == 0:
                                     continue
-                                    
                                 labelInt = int(label)
-                                if labelInt < colorNode.GetNumberOfColors():
-                                    rgba = [0, 0, 0, 0]
-                                    colorNode.GetColor(labelInt, rgba)
-                                    ctf.AddRGBPoint(label, rgba[0], rgba[1], rgba[2])
-                                    otf.AddPoint(label, self.customParamNode.opacity)
-                                    gtf.AddPoint(label, 1.0)
-                                else:
-                                    ctf.AddRGBPoint(label, 1.0, 1.0, 1.0)
-                                    otf.AddPoint(label, self.customParamNode.opacity)
-                                    gtf.AddPoint(label, 1.0)
 
-                            volumeProperty = volumePropertyNode.GetVolumeProperty()
-                            volumeProperty.SetColor(ctf)
-                            volumeProperty.SetScalarOpacity(otf)
-                            volumeProperty.SetGradientOpacity(gtf)
-                            volumeProperty.SetInterpolationTypeToLinear()
-                            volumeProperty.ShadeOn()
-                            volumeProperty.SetAmbient(0.3)
-                            volumeProperty.SetDiffuse(0.7)
-                            volumeProperty.SetSpecular(0.2)
+                                # Use the button label index to look up the color the user picked
+                                # This is the key fix: colorNode was updated at index 1 (button label),
+                                # not at index 255 (voxel value) — so we must look up by button label
+                                colorIdx = voxelToButtonLabel.get(labelInt, labelInt)
+
+                                rgba = [0.0, 0.0, 0.0, 0.0]
+                                if colorIdx < colorNode.GetNumberOfColors():
+                                    colorNode.GetColor(colorIdx, rgba)
+                                ctf.AddRGBPoint(label, rgba[0], rgba[1], rgba[2])
+                                otf.AddPoint(label, self.customParamNode.opacity)
 
                             volumePropertyNode.Modified()
                             volumeRenderingDisplayNode.Modified()
-                        
-                        # Make sure volume rendering is visible
+
                         volumeRenderingDisplayNode.SetVisibility(True)
 
                 # Force render updates
