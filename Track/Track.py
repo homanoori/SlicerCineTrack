@@ -1968,11 +1968,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                         volumePropertyNode.SetGradientOpacity(gtf)
                         
                         # Ensure solid rendering settings
-                        volumePropertyNode.SetInterpolationTypeToLinear()
-                        volumePropertyNode.ShadeOn()  # Enable shading for better 3D appearance
-                        volumePropertyNode.SetAmbient(0.3)
-                        volumePropertyNode.SetDiffuse(0.7)
-                        volumePropertyNode.SetSpecular(0.2)
+                        volumeProperty = volumePropertyNode.GetVolumeProperty()
+                        volumeProperty.SetInterpolationTypeToLinear()
+                        volumeProperty.ShadeOn()  # Enable shading for better 3D appearance
+                        volumeProperty.SetAmbient(0.3)
+                        volumeProperty.SetDiffuse(0.7)
+                        volumeProperty.SetSpecular(0.2)
 
                         volumePropertyNode.Modified()
                         volumeRenderingDisplayNode.Modified()
@@ -2010,14 +2011,15 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                                     otf.AddPoint(label, self.customParamNode.opacity)
                                     gtf.AddPoint(label, 1.0)
 
-                            volumePropertyNode.SetColor(ctf)
-                            volumePropertyNode.SetScalarOpacity(otf)
-                            volumePropertyNode.SetGradientOpacity(gtf)
-                            volumePropertyNode.SetInterpolationTypeToLinear()
-                            volumePropertyNode.ShadeOn()
-                            volumePropertyNode.SetAmbient(0.3)
-                            volumePropertyNode.SetDiffuse(0.7)
-                            volumePropertyNode.SetSpecular(0.2)
+                            volumeProperty = volumePropertyNode.GetVolumeProperty()
+                            volumeProperty.SetColor(ctf)
+                            volumeProperty.SetScalarOpacity(otf)
+                            volumeProperty.SetGradientOpacity(gtf)
+                            volumeProperty.SetInterpolationTypeToLinear()
+                            volumeProperty.ShadeOn()
+                            volumeProperty.SetAmbient(0.3)
+                            volumeProperty.SetDiffuse(0.7)
+                            volumeProperty.SetSpecular(0.2)
 
                             volumePropertyNode.Modified()
                             volumeRenderingDisplayNode.Modified()
