@@ -1533,11 +1533,40 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
               self.customParamNode.deformedMaskSequenceNode = deformedMaskSequenceNode
 
               mask = sitk.ReadImage(self.customParamNode.path3DSegmentation)
+              # Compute combined bounding box across all labels
+              stats = sitk.LabelShapeStatisticsImageFilter()
+              stats.Execute(mask)
 
-              for i, path in enumerate(self.deformationFieldPaths):
+              x_min = min(stats.GetBoundingBox(l)[0] for l in stats.GetLabels())
+              y_min = min(stats.GetBoundingBox(l)[1] for l in stats.GetLabels())
+              z_min = min(stats.GetBoundingBox(l)[2] for l in stats.GetLabels())
+              x_max = max(stats.GetBoundingBox(l)[0] + stats.GetBoundingBox(l)[3] for l in stats.GetLabels())
+              y_max = max(stats.GetBoundingBox(l)[1] + stats.GetBoundingBox(l)[4] for l in stats.GetLabels())
+              z_max = max(stats.GetBoundingBox(l)[2] + stats.GetBoundingBox(l)[5] for l in stats.GetLabels())
+
+              # Add margin to volume bounds
+              margin = 10
+              vol_size = mask.GetSize()
+              crop_start = [max(0, x_min - margin), max(0, y_min - margin), max(0, z_min - margin)]
+              crop_size  = [min(vol_size[0], x_max + margin) - crop_start[0],
+                            min(vol_size[1], y_max + margin) - crop_start[1],
+                            min(vol_size[2], z_max + margin) - crop_start[2]]
+
+              # Crop mask to bounding box region
+              croppedMask = sitk.RegionOfInterest(mask, crop_size, crop_start)
+
+              # Create full-size empty volume to paste results into
+              emptyVolume = sitk.Image(mask.GetSize(), mask.GetPixelID())
+              emptyVolume.CopyInformation(mask)
+              
+              transforms = [sitk.ReadTransform(path) for path in self.deformationFieldPaths]
+
+              for i, tx in enumerate(transforms):
                   try:
-                      tx = sitk.ReadTransform(path)
-                      deformedMask = sitk.Resample(mask, mask, tx, sitk.sitkNearestNeighbor)
+                      deformedCrop = sitk.Resample(croppedMask, croppedMask, tx, sitk.sitkNearestNeighbor)
+
+                      # Paste deformed crop back into full-size volume
+                      deformedMask = sitk.Paste(emptyVolume, deformedCrop, deformedCrop.GetSize(), [0,0,0], crop_start)
 
                       # Create volume node directly in memory without saving to disk
                       volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"DeformedMask_{i}")
