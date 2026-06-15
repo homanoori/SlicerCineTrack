@@ -1560,8 +1560,17 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
               emptyVolume.CopyInformation(mask)
               
               transforms = [sitk.ReadTransform(path) for path in self.deformationFieldPaths]
+              # Create a progress/loading bar to display the progress of the deformation process
+              progressDialog = qt.QProgressDialog("Applying deformation field", "Cancel",
+                                                  0, len(transforms))
+              progressDialog.minimumDuration = 0
 
               for i, tx in enumerate(transforms):
+                  # If the 'Cancel' button was pressed, remove the partially-built sequence node and return to a default state
+                  if progressDialog.wasCanceled:
+                      slicer.mrmlScene.RemoveNode(deformedMaskSequenceNode)
+                      self.customParamNode.deformedMaskSequenceNode = None
+                      return
                   try:
                       deformedCrop = sitk.Resample(croppedMask, croppedMask, tx, sitk.sitkNearestNeighbor)
 
@@ -1597,6 +1606,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                   except Exception as e:
                       slicer.util.errorDisplay(f"Failed to apply deformation field to mask {i}: {e}")
                       return
+                  
+                  #  Update how far we are in the progress bar
+                  progressDialog.setValue(i + 1)
+                  slicer.util.forceRenderAllViews()
+                  slicer.app.processEvents()
+
 
               # Playback setup
               sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", "Sequence Browser")
