@@ -883,9 +883,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.selector2DImagesFiles.addPaths(self.customParamNode.files2DImages)
     self.selector2DImagesFiles.blockSignals(False)
 
-    if self.customParamNode.sequenceNode2DImages:
+    if self.customParamNode.sequenceNode2DImages and not self.isPrewarpedMode():
       self.selectorTransformsFile.enabled = True
       self.selectorTransformsFile.setToolTip("Load a Transforms file corresponding to the Region of Interest's coordinate changes.")
+    elif not self.isPrewarpedMode():
+      self.selectorTransformsFile.enabled = False
+      self.selectorTransformsFile.setToolTip("Load a valid Cine Images Folder to enable loading a Transforms file.")
     else:
       self.selectorTransformsFile.enabled = False
       self.selectorTransformsFile.setToolTip("Load a valid Cine Images Folder to enable loading a Transforms file.")
