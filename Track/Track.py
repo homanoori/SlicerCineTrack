@@ -82,6 +82,7 @@ class CustomParameterNode:
   sequenceNode2DImages: vtkMRMLSequenceNode
   path3DSegmentation: str
   node3DSegmentation: int  # subject hierarchy id
+  files3DSegmentations: list[str] = []
   node3DSegmentationLabelMap: int  # subject hierarchy id
   transformsFilePath: str
   sequenceNodeTransforms: vtkMRMLSequenceNode
@@ -218,28 +219,27 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.browseImagesButton.setToolTip("Browse and add Cine Images.")
     self.viewMoreButton.setToolTip("View all selected files")
 
-    # 3D segmentation file selector + delete button
-    self.selector3DSegmentation = ctk.ctkPathLineEdit()
-    self.selector3DSegmentation.filters = ctk.ctkPathLineEdit.Files | ctk.ctkPathLineEdit.Executable | ctk.ctkPathLineEdit.NoDot | ctk.ctkPathLineEdit.NoDotDot | ctk.ctkPathLineEdit.Readable
-    self.selector3DSegmentation.settingKey = '3DSegmentation'
-    self.selector3DSegmentation.showHistoryButton = False
+    self.selector3DSegmentationFiles = ctk.ctkPathListWidget()
+    self.selector3DSegmentationFiles.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
+    self.selector3DSegmentationFiles.setMaximumHeight(100)
+    self.selector3DSegmentationFiles.setToolTip(
+        "Select one segmentation file, or one per cine image for pre-warped playback.")
 
-    self.deleteSegmentationButton = qt.QPushButton("X")  
-    self.deleteSegmentationButton.setIconSize(iconSize)
-    self.deleteSegmentationButton.setFixedSize(buttonSize)
-    self.deleteSegmentationButton.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed) 
-    
+    self.browseSegmentationButton = qt.QPushButton("...")
+    self.browseSegmentationButton.setFixedSize(qt.QSize(26, 21))
+    self.browseSegmentationButton.setToolTip("Browse and add segmentation file(s).")
+
+    self.deleteSegmentationButton = qt.QPushButton("X")
+    self.deleteSegmentationButton.setFixedSize(qt.QSize(25, 25))
+    self.deleteSegmentationButton.setToolTip("Remove segmentation file(s).")
+
     self.selectorSegmentationLayout = qt.QHBoxLayout()
+    self.selectorSegmentationLayout.setSpacing(0)
     self.selectorSegmentationLayout.setAlignment(qt.Qt.AlignLeft)
-    self.selectorSegmentationLayout.addWidget(self.selector3DSegmentation)
+    self.selectorSegmentationLayout.addWidget(self.selector3DSegmentationFiles)
+    self.selectorSegmentationLayout.addWidget(self.browseSegmentationButton)
     self.selectorSegmentationLayout.addWidget(self.deleteSegmentationButton)
-    tooltipText = "Remove Segmentation File."
-    self.deleteSegmentationButton.setToolTip(tooltipText)
-    self.inputsFormLayout.addRow("Segmentation File: ", self.selectorSegmentationLayout)
-    tooltipText = "Insert a Segmentation file in .mha format."
-    self.selector3DSegmentation.setToolTip(tooltipText)    
-    browseButton = self.selector3DSegmentation.findChildren(qt.QToolButton)[0]
-    browseButton.setToolTip(tooltipText)
+    self.inputsFormLayout.addRow("Segmentation File(s): ", self.selectorSegmentationLayout)
 
     #  Dropdown: Transform Type 
 
@@ -617,6 +617,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.overlayOutlineOnlyBox.connect("toggled(bool)", self.onOverlayOutlineChange)
     self.resetButton.connect("clicked(bool)", self.onResetButton)
     self.browseImagesButton.clicked.connect(self.onMultiFileBrowse)
+    self.browseSegmentationButton.clicked.connect(self.onBrowseSegmentationFiles)
     self.viewMoreButton.clicked.connect(self.onViewMoreClicked)
     self.deleteImagesButton.clicked.connect(self.onDeleteImagesButton)
     #self.overlayColorButton.connect('clicked(bool)', self.onOverlayColorPicker)
@@ -626,8 +627,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # in the MRML scene (in the selected parameter node).
     self.selector2DImagesFiles.connect("pathsChanged(QStringList,QStringList)", \
       lambda *args: self.updateParameterNodeFromGUI("selector2DImagesFiles", "pathsChanged"))
-    self.selector3DSegmentation.connect("currentPathChanged(QString)", \
-      lambda: self.updateParameterNodeFromGUI("selector3DSegmentation", "currentPathChanged"))
+    self.selector3DSegmentationFiles.connect("pathsChanged(QStringList,QStringList)", \
+      lambda *args: self.updateParameterNodeFromGUI("selector3DSegmentationFiles", "pathsChanged"))
     self.selectorTransformsFile.connect("currentPathChanged(QString)", \
       self.onTransformsFilePathChange)
 
@@ -646,15 +647,15 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       lambda: [self.selector2DImagesFiles.clear(),
                self.updateParameterNodeFromGUI("selector2DImagesFiles", "currentPathChanged")])
     self.deleteSegmentationButton.connect("clicked(bool)", \
-      lambda: [self.selector3DSegmentation.setCurrentPath(''),
-               self.updateParameterNodeFromGUI("selector3DSegmentation", "currentPathChanged"),])
+      lambda: [self.selector3DSegmentationFiles.clear(),
+               self.updateParameterNodeFromGUI("selector3DSegmentationFiles", "pathsChanged")])
     self.deleteTransformsButton.connect("clicked(bool)", \
       lambda: [self.selectorTransformsFile.setCurrentPath(''), self.updateParameterNodeFromGUI("applyTransformsButton", "clicked")])
 
     # These connections will reset the visuals when one of the main inputs are modified
     self.selector2DImagesFiles.connect("currentPathChanged(QString)", self.resetVisuals)
-    self.selector3DSegmentation.connect("currentPathChanged(QString)", self.resetVisuals)
-    
+    self.selector3DSegmentationFiles.connect("pathsChanged(QStringList,QStringList)", \
+      lambda *args: self.resetVisuals())    
 
 
     # Initialize deformation field paths list
@@ -667,6 +668,62 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # Make sure parameter node is initialized (needed for module reload)
     self.initializeParameterNode()
 
+  def isPrewarpedMode(self):
+    """True when the user loaded one segmentation per cine image (pre-warped masks)."""
+    return len(self.customParamNode.files3DSegmentations) > 1
+
+  def getEffectiveTransformType(self):
+      """
+      Derive the transform branch from actual state, not the dropdown widget.
+      Any per-frame mask sequence (DVF-deformed or user-supplied pre-warped)
+      must take the mask-swap path regardless of what the dropdown shows.
+      """
+      if self.customParamNode.deformedMaskSequenceNode:
+          return "Displacement Field"
+      return self.transformTypeDropdown.currentText
+
+  def updateTransformsInputsState(self):
+      """
+      Enable/disable all transform-related inputs based on pre-warped mode.
+      Only acts when the mode actually changes, so it never fights the
+      enable/disable logic in updatePlaybackButtons or onTransformsFilePathChange.
+      """
+      prewarped = self.isPrewarpedMode()
+      if prewarped == getattr(self, "_prewarpedUIApplied", None):
+          return  # no change — leave widget states to their normal owners
+      self._prewarpedUIApplied = prewarped
+
+      widgets = (self.transformTypeDropdown,
+                 self.selectorTransformsFile, self.deleteTransformsButton,
+                 self.columnXSelector, self.columnYSelector, self.columnZSelector,
+                 self.deformationFileSelector, self.browseDeformationFilesButton,
+                 self.deleteDeformationFilesButton)
+
+      if prewarped:
+          reason = ("Transforms are disabled: one segmentation was loaded per cine image, "
+                    "so each frame already has its own pre-warped mask.")
+          for w in widgets:
+              w.enabled = False
+              w.setToolTip(reason)
+      else:
+          # Leaving pre-warped mode: re-enable and restore original tooltips
+          self.transformTypeDropdown.enabled = True
+          self.transformTypeDropdown.setToolTip("")
+          self.selectorTransformsFile.enabled = bool(self.customParamNode.sequenceNode2DImages)
+          self.selectorTransformsFile.setToolTip("Insert a Transforms file. Valid filetypes: .csv, .xls, .xlsx")
+          self.deleteTransformsButton.enabled = True
+          self.deleteTransformsButton.setToolTip("Remove Transforms File.")
+          # Column selectors are only meaningful once a transforms file populated them
+          hasColumns = self.columnXSelector.count > 0
+          for w in (self.columnXSelector, self.columnYSelector, self.columnZSelector):
+              w.enabled = hasColumns
+              w.setToolTip("")
+          self.deformationFileSelector.enabled = True
+          self.deformationFileSelector.setToolTip("Select one .h5/.hdf5 file for each cine image.")
+          self.browseDeformationFilesButton.enabled = True
+          self.browseDeformationFilesButton.setToolTip("Browse and add deformation field files")
+          self.deleteDeformationFilesButton.enabled = True
+          self.deleteDeformationFilesButton.setToolTip("Remove selected deformation field files")
 
   def onTransformTypeChanged(self, value):
     self.transformType = value
@@ -815,7 +872,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
     self._updatingGUIFromParameterNode = True
 
-    self.selector3DSegmentation.currentPath = self.customParamNode.path3DSegmentation
+    self.selector3DSegmentationFiles.blockSignals(True)
+    self.selector3DSegmentationFiles.clear()
+    self.selector3DSegmentationFiles.addPaths(self.customParamNode.files3DSegmentations)
+    self.selector3DSegmentationFiles.blockSignals(False)
+
     self.selectorTransformsFile.currentPath = self.customParamNode.transformsFilePath
     self.selector2DImagesFiles.blockSignals(True)
     self.selector2DImagesFiles.clear()
@@ -863,7 +924,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             show=False,
             customParamNode=self.customParamNode,
             deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-            transformType=self.transformTypeDropdown.currentText
+            transformType=self.getEffectiveTransformType()
         )
       
       else:
@@ -887,9 +948,13 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.overlayOutlineOnlyBox.checked = self.customParamNode.overlayAsOutline
 
     
-    #self.applyTransformButton.enabled = False
     # Only disable Apply if images are loaded — re-enable so user can trigger playback
     self.applyTransformButton.enabled = inputsProvided
+
+    # Keep transforms inputs disabled (with tooltip) whenever pre-warped mode is active.
+    # This runs on every GUI refresh, so no other code path can leave them re-enabled.
+    self.updateTransformsInputsState()
+
     self._updatingGUIFromParameterNode = False
 
   def updateParameterNodeFromGUI(self, caller=None, event=None):
@@ -912,7 +977,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         if caller == "selector2DImagesFiles" and event == "pathsChanged":
           # Remember if all inputs were previously provided
-          inputsProvided = self.selector3DSegmentation.currentPath != '' or self.selectorTransformsFile.currentPath != ''
+          inputsProvided = len(self.customParamNode.files3DSegmentations) > 0 or self.selectorTransformsFile.currentPath != ''
           # Since the transformation information is relative to the 2D images loaded into 3D Slicer,
           # if the path changes, we want to remove any transforms related information. The user should
           # reselect the transforms file they wish to use with the 2D images.
@@ -1091,228 +1156,270 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self.totalFrameLabel.setText(f"of 0")
                 slicer.util.warningDisplay("No image files were found within the selected files.", "Input Error")
 
-        if caller == "selector3DSegmentation" and event == "currentPathChanged":
-            
-          currentPath = self.selector3DSegmentation.currentPath
-          fileName = os.path.basename(currentPath)
-          
-          if re.match('.*\\.dcm', currentPath): # if getting a dcm -> try install dcmrtstruct2nii
-            try:
-              from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
-            except ModuleNotFoundError:
-              if slicer.util.confirmOkCancelDisplay("To load a DICOM RT structure, the dcmrtstruct2nii module is required."
-                                        "Please click 'OK' to install it", "Missing Python packages"):
-                messageBox = qt.QMessageBox()
-                messageBox.setIcon(qt.QMessageBox.Information)
-                messageBox.setWindowTitle("Package Installation")
-                messageBox.setText("Installing 'dcmrtstruct2nii'...")
-                messageBox.setStandardButtons(qt.QMessageBox.NoButton)
-                messageBox.show()
-                slicer.app.processEvents()
+        if caller == "selector3DSegmentationFiles" and event == "pathsChanged":
+            segPaths = sorted(list(self.selector3DSegmentationFiles.paths))
+            previousPaths = list(self.customParamNode.files3DSegmentations)
 
-                slicer.util.pip_install('dcmrtstruct2nii')
-                from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
-                messageBox.setText(f"Package 'dcmrtstruct2nii' installed successfully. {fileName} will now load.")
-                slicer.app.processEvents()  # Process events to allow the dialog to update
-                qt.QTimer.singleShot(3000, messageBox.accept)
+            if len(segPaths) > 1:
+                # ---- Entering pre-warped mode ----
+                # Warn before clearing an already-loaded transforms file
+                if self.customParamNode.transformsFilePath or self.selectorTransformsFile.currentPath:
+                    if not slicer.util.confirmYesNoDisplay(
+                            "You have loaded multiple segmentation files (one per cine image).\n\n"
+                            "In this mode each frame uses its own pre-warped mask, so the "
+                            "Transforms file is not used and will be cleared.\n\nContinue?",
+                            "Pre-Warped Segmentations"):
+                        # User declined — revert the selection
+                        self.selector3DSegmentationFiles.blockSignals(True)
+                        self.selector3DSegmentationFiles.clear()
+                        self.selector3DSegmentationFiles.addPaths(previousPaths)
+                        self.selector3DSegmentationFiles.blockSignals(False)
+                        return
+                    self.customParamNode.transformsFilePath = ""
+                    self.customParamNode.sequenceNodeTransforms = None
+                    self.selectorTransformsFile.blockSignals(True)
+                    self.selectorTransformsFile.setCurrentPath('')
+                    self.selectorTransformsFile.blockSignals(False)
 
-                # Wait for user interaction
-                while messageBox.isVisible():
-                    slicer.app.processEvents()
-                messageBox.hide()
-            except Exception as e:
-              print(e)
-              slicer.util.warningDisplay(f"{fileName} file failed to load.\nPlease load a .csv or .txt file instead. ",
-                                            "Failed to Load File")
-              return# Hide the message box
+                # Early feedback if the count already provably mismatches
+                if self.customParamNode.totalImages > 0 and \
+                  len(segPaths) != self.customParamNode.totalImages:
+                    slicer.util.warningDisplay(
+                        f"Please load either exactly one segmentation, or {self.customParamNode.totalImages}"
+                        " segmentations (one per cine image).",
+                        "Segmentation Count Mismatch")
+                    # Not clearing the selection — the user may still be adding files
+                    # or about to change the cine set. Hard enforcement happens at Apply.
 
-            from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
-            structs = list_rt_structs(currentPath)
-            if len(structs) == 0:
-                slicer.util.warningDisplay(f"{fileName} does not contain any RT structures.",
-                                            "No RT Structures Found")
-                return
-            # show a dialog to select the struct and path to dicom
-            def onOK():
-              nonlocal currentPath
-              structure = structSelectorComboBox.currentText
-              dicomPath = dicomPathSelector.currentPath
-              outputPath = outputPathSelector.currentPath
-              structures = [structure]
-              segmentationPath = os.path.join(outputPath, 'mask_' + structure + '.nii.gz')
-              try:
-                messageBox = qt.QMessageBox()
-                messageBox.setIcon(qt.QMessageBox.Information)
-                messageBox.setWindowTitle("Converting DICOM RT-STRUCT")
-                messageBox.setText(f"Converting {structure} to a loadable format...")
-                messageBox.setStandardButtons(qt.QMessageBox.NoButton)
-                messageBox.show()
-                slicer.app.processEvents()
-                dcmrtstruct2nii(rtstruct_file=currentPath,dicom_file=dicomPath,output_path=outputPath, structures=structures,convert_original_dicom=False)
-                self.selector3DSegmentation.currentPath = segmentationPath
-                currentPath = segmentationPath
-                messageBox.setText(f"Convert DICOM RT_STRUCT successfully. Mask {structure} will now load.")
-                slicer.app.processEvents()  # Process events to allow the dialog to update
-                qt.QTimer.singleShot(3000, messageBox.accept)
-              except Exception as e:
-                slicer.util.warningDisplay(f"Failed to convert {fileName} to a loadable format.\n{e}",
-                                            "Failed to Convert File")
+                self.customParamNode.files3DSegmentations = segPaths
+                self.customParamNode.path3DSegmentation = ""   # single-file path unused in this mode
+                self.customParamNode.node3DSegmentation = 0
+                self.customParamNode.node3DSegmentationLabelMap = 0
+
+            elif len(segPaths) == 1:
+                # ---- Single-file mode: existing behavior, path taken from the list ----
+                self.customParamNode.files3DSegmentations = segPaths
+                currentPath = segPaths[0]
+                fileName = os.path.basename(currentPath)
+
+                if re.match('.*\\.dcm', currentPath):  # if getting a dcm -> try install dcmrtstruct2nii
+                    try:
+                        from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
+                    except ModuleNotFoundError:
+                        if slicer.util.confirmOkCancelDisplay("To load a DICOM RT structure, the dcmrtstruct2nii module is required."
+                                                              "Please click 'OK' to install it", "Missing Python packages"):
+                            messageBox = qt.QMessageBox()
+                            messageBox.setIcon(qt.QMessageBox.Information)
+                            messageBox.setWindowTitle("Package Installation")
+                            messageBox.setText("Installing 'dcmrtstruct2nii'...")
+                            messageBox.setStandardButtons(qt.QMessageBox.NoButton)
+                            messageBox.show()
+                            slicer.app.processEvents()
+
+                            slicer.util.pip_install('dcmrtstruct2nii')
+                            from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
+                            messageBox.setText(f"Package 'dcmrtstruct2nii' installed successfully. {fileName} will now load.")
+                            slicer.app.processEvents()
+                            qt.QTimer.singleShot(3000, messageBox.accept)
+                            while messageBox.isVisible():
+                                slicer.app.processEvents()
+                            messageBox.hide()
+                        else:
+                            # User declined install — clear the selection
+                            self.customParamNode.files3DSegmentations = []
+                            self.selector3DSegmentationFiles.blockSignals(True)
+                            self.selector3DSegmentationFiles.clear()
+                            self.selector3DSegmentationFiles.blockSignals(False)
+                            return
+
+                    from dcmrtstruct2nii import dcmrtstruct2nii, list_rt_structs
+                    structs = list_rt_structs(currentPath)
+                    if len(structs) == 0:
+                        slicer.util.warningDisplay(f"{fileName} does not contain any RT structures.",
+                                                   "No RT Structures Found")
+                        return
+
+                    def onOK():
+                        nonlocal currentPath
+                        structure = structSelectorComboBox.currentText
+                        dicomPath = dicomPathSelector.currentPath
+                        outputPath = outputPathSelector.currentPath
+                        structures = [structure]
+                        segmentationPath = os.path.join(outputPath, 'mask_' + structure + '.nii.gz')
+                        try:
+                            messageBox = qt.QMessageBox()
+                            messageBox.setIcon(qt.QMessageBox.Information)
+                            messageBox.setWindowTitle("Converting DICOM RT-STRUCT")
+                            messageBox.setText(f"Converting {structure} to a loadable format...")
+                            messageBox.setStandardButtons(qt.QMessageBox.NoButton)
+                            messageBox.show()
+                            slicer.app.processEvents()
+                            dcmrtstruct2nii(rtstruct_file=currentPath, dicom_file=dicomPath,
+                                            output_path=outputPath, structures=structures,
+                                            convert_original_dicom=False)
+                            currentPath = segmentationPath
+                            self.customParamNode.files3DSegmentations = [segmentationPath]
+                            messageBox.setText(f"Convert DICOM RT_STRUCT successfully. Mask {structure} will now load.")
+                            slicer.app.processEvents()
+                            qt.QTimer.singleShot(3000, messageBox.accept)
+                        except Exception as e:
+                            slicer.util.warningDisplay(f"Failed to convert {fileName} to a loadable format.\n{e}",
+                                                       "Failed to Convert File")
+                            self.customParamNode.path3DSegmentation = ""
+                            self.customParamNode.files3DSegmentations = []
+                            self.selector3DSegmentationFiles.blockSignals(True)
+                            self.selector3DSegmentationFiles.clear()
+                            self.selector3DSegmentationFiles.blockSignals(False)
+                            return
+                        finally:
+                            structSelectorDialog.accept()
+                            structSelectorDialog.hide()
+
+                    structSelectorDialogLayout = qt.QFormLayout()
+                    structSelectorComboBox = qt.QComboBox()
+                    structSelectorComboBox.addItems(structs)
+                    structSelectorDialogLayout.addRow("Select the target segmentation:", structSelectorComboBox)
+                    dicomPathSelector = ctk.ctkPathLineEdit()
+                    dicomPathSelector.filters = ctk.ctkPathLineEdit.Dirs
+                    structSelectorDialogLayout.addRow("DICOM images directory", dicomPathSelector)
+                    outputPathSelector = ctk.ctkPathLineEdit()
+                    outputPathSelector.filters = ctk.ctkPathLineEdit.Dirs
+                    structSelectorDialogLayout.addRow("Output segmentation directory", outputPathSelector)
+                    structSelectorDialogLayout.addWidget(qt.QLabel("Note: DICOM RT-STRUCT files are not directly loadable. Please provide the paths above to convert the segmentation into a loadable format."))
+
+                    okButton = qt.QPushButton("OK")
+                    okButton.setDefault(True)
+                    structSelectorDialogLayout.addWidget(okButton)
+
+                    structSelectorDialog = qt.QDialog()
+                    structSelectorDialog.setLayout(structSelectorDialogLayout)
+                    structSelectorDialog.setModal(True)
+                    okButton.connect("clicked()", onOK)
+
+                    structSelectorDialog.show()
+                    while structSelectorDialog.isVisible():
+                        slicer.app.processEvents()
+                    if structSelectorDialog.result() == qt.QDialog.Rejected:
+                        self.customParamNode.path3DSegmentation = ""
+                        self.customParamNode.files3DSegmentations = []
+                        self.selector3DSegmentationFiles.blockSignals(True)
+                        self.selector3DSegmentationFiles.clear()
+                        self.selector3DSegmentationFiles.blockSignals(False)
+                        return
+                    structSelectorDialog.hide()
+
+                # Remove the image nodes of each slice view used to preserve the slice views
+                nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
+                nodes.UnRegister(None)
+                for node in nodes:
+                    if node.GetName() == node.GetAttribute('Sequences.BaseName'):
+                        slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
+                        slicer.mrmlScene.RemoveNode(node)
+
+                # Remove the label map node and the nodes it referenced, all created by the previous node
+                nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")
+                nodes.UnRegister(None)
+                if nodes.GetNumberOfItems() == 1:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+                    if nodeToRemove.GetNumberOfDisplayNodes() == 1:
+                        slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode().GetNodeReference('volumeProperty'))
+                        slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+
+                # Remove the 3D segmentation node and the nodes it referenced, all created by the previous node
+                nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "3D Segmentation")
+                nodes.UnRegister(None)
+                if nodes.GetNumberOfItems() == 1:
+                    nodeToRemove = nodes.GetItemAsObject(0)
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
+                    slicer.mrmlScene.RemoveNode(nodeToRemove)
+
+                # Remove previous node values stored in variables
+                self.customParamNode.node3DSegmentation = 0
+                self.customParamNode.node3DSegmentationLabelMap = 0
+
+                # Loads segmentation files
+                fileFormats = ['.*\\.mha', '.*\\.dcm', '.*\\.nrrd', '.*\\.nii', '.*\\.hdr', '.*\\.img', '.*\\.nhdr']
+                validFormat = any(re.match(format, currentPath) for format in fileFormats)
+                if validFormat:
+                    # Set a param to hold the path to the 3D segmentation file
+                    self.customParamNode.path3DSegmentation = currentPath
+
+                    segmentationNode = slicer.util.loadVolume(currentPath,
+                                                              {"singleFile": True, "show": False})
+
+                    # Check if Segmentation file has less than 30 values:
+                    if np.unique(slicer.util.arrayFromVolume(segmentationNode)).size > 30:
+                        slicer.util.warningDisplay("This file contains more than 30 unique values. ")
+
+                    # Get array from volume
+                    segArray = arrayFromVolume(segmentationNode)
+                    uniqueLabels = np.unique(segArray)
+
+                    # Check for multi-label (more than just 0 and 1)
+                    nonZeroLabels = uniqueLabels[uniqueLabels != 0]
+
+                    if len(nonZeroLabels) > 1:
+                        # Remap to consecutive label values (e.g., 1, 2, 3, ...)
+                        remapDict = {label: i + 1 for i, label in enumerate(nonZeroLabels)}
+                        for oldVal, newVal in remapDict.items():
+                            segArray[segArray == oldVal] = newVal
+                        # Push updated array back into the segmentation node
+                        updateVolumeFromArray(segmentationNode, segArray)
+
+                    remappedLabels = list(range(1, len(nonZeroLabels) + 1))
+                    self.addAdditionalOverlayColorButtons(remappedLabels, segmentationNode)
+
+                    # Continue with existing logic
+                    self.logic.clearSliceForegrounds()
+                    segmentationNode.SetName("3D Segmentation")
+                    nodeID = shNode.GetItemByDataNode(segmentationNode)
+                    self.customParamNode.node3DSegmentation = nodeID
+
+                    # Create a label map of the 3D segmentation
+                    volumesModuleLogic = slicer.modules.volumes.logic()
+                    segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', "3D Segmentation Label Map")
+                    volumesModuleLogic.CreateLabelVolumeFromVolume(slicer.mrmlScene, segmentationLabelMap, segmentationNode)
+
+                    labelMapID = shNode.GetItemByDataNode(segmentationLabelMap)
+                    self.customParamNode.node3DSegmentationLabelMap = labelMapID
+
+                    # Apply any pending colors that were stored before the label map was created
+                    self.applyPendingLabelColors()
+
+                else:
+                    self.customParamNode.path3DSegmentation = ''
+                    self.customParamNode.files3DSegmentations = []
+                    slicer.util.warningDisplay("Not a valid file format."
+                                               "The file was not loaded into 3D Slicer.", "Input Error")
+                    self.selector3DSegmentationFiles.blockSignals(True)
+                    self.selector3DSegmentationFiles.clear()
+                    self.selector3DSegmentationFiles.blockSignals(False)
+
+            else:
+                # ---- Cleared ----
+                self.customParamNode.files3DSegmentations = []
                 self.customParamNode.path3DSegmentation = ""
-                self.selector3DSegmentation.currentPath = ""
-                return
-              finally:
-                structSelectorDialog.accept()
-                structSelectorDialog.hide()
-            structSelectorDialogLayout = qt.QFormLayout()
-            structSelectorComboBox = qt.QComboBox()
-            structSelectorComboBox.addItems(structs)
-            structSelectorDialogLayout.addRow("Select the target segmentation:", structSelectorComboBox)
-            dicomPathSelector = ctk.ctkPathLineEdit()
-            dicomPathSelector.filters = ctk.ctkPathLineEdit.Dirs
-            structSelectorDialogLayout.addRow("DICOM images directory", dicomPathSelector)
-            outputPathSelector = ctk.ctkPathLineEdit()
-            outputPathSelector.filters = ctk.ctkPathLineEdit.Dirs
-            structSelectorDialogLayout.addRow("Output segmentation directory", outputPathSelector)
-            structSelectorDialogLayout.addWidget(qt.QLabel("Note: DICOM RT-STRUCT files are not directly loadable. Please provide the paths above to convert the segmentation into a loadable format."))
-            
-            
-            okButton = qt.QPushButton("OK")
-            okButton.setDefault(True)
-            
-            structSelectorDialogLayout.addWidget(okButton)     
-            
-            structSelectorDialog = qt.QDialog()
-            structSelectorDialog.setLayout(structSelectorDialogLayout)
-            structSelectorDialog.setModal(True)
-            okButton.connect("clicked()", onOK)
-            
-            structSelectorDialog.show()
-            while structSelectorDialog.isVisible():
-                slicer.app.processEvents()
-            if structSelectorDialog.result() == qt.QDialog.Rejected:
-              # Remove filepath for the Segmentation File in the `Inputs` section
-              self.customParamNode.path3DSegmentation = ""
-              self.selector3DSegmentation.currentPath = ""
-              return
-            structSelectorDialog.hide()      
-          
-          # Remove the image nodes of each slice view used to preserve the slice views
-          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
-          nodes.UnRegister(None)
-          for node in nodes:
-            if node.GetName() == node.GetAttribute('Sequences.BaseName'):
-              slicer.mrmlScene.RemoveNode(node.GetDisplayNode())
-              slicer.mrmlScene.RemoveNode(node)
-              
-          # Remove the label map node and the nodes it referenced, all created by the previous node
-          nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-            if nodeToRemove.GetNumberOfDisplayNodes() == 1:
-              slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode().GetNodeReference('volumeProperty'))
-              slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-            slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-          
-          # Remove the 3D segmentation node and the nodes it referenced, all created by the previous node
-          nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "3D Segmentation")
-          nodes.UnRegister(None)
-          if nodes.GetNumberOfItems() == 1:
-            nodeToRemove = nodes.GetItemAsObject(0)
-            slicer.mrmlScene.RemoveNode(nodeToRemove.GetDisplayNode())
-            slicer.mrmlScene.RemoveNode(nodeToRemove.GetStorageNode())
-            slicer.mrmlScene.RemoveNode(nodeToRemove)
-          
-          # Remove previous node values stored in variables
-          self.customParamNode.node3DSegmentation = 0
-          self.customParamNode.node3DSegmentationLabelMap = 0
+                self.customParamNode.node3DSegmentation = 0
+                self.customParamNode.node3DSegmentationLabelMap = 0
+                # remove leftover per-frame mask sequence if one exists
+                nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Per-Frame Mask Sequence")
+                nodes.UnRegister(None)
+                for i in range(nodes.GetNumberOfItems()):
+                    slicer.mrmlScene.RemoveNode(nodes.GetItemAsObject(i))
+                self.customParamNode.deformedMaskSequenceNode = None
 
-          # Loads segmentation files
-          fileFormats = ['.*\\.mha', '.*\\.dcm', '.*\\.nrrd', '.*\\.nii', '.*\\.hdr', '.*\\.img', '.*\\.nhdr'] # Supported segmentation files
-          validFormat = any(re.match(format, currentPath) for format in fileFormats)
-          if validFormat:
-            # If a 3D segmentation node already exists, delete it before we load the new one
-            if self.customParamNode.node3DSegmentation:
-              nodeID = self.customParamNode.node3DSegmentation
-
-            # Set a param to hold the path to the 3D segmentation file
-            self.customParamNode.path3DSegmentation = self.selector3DSegmentation.currentPath
-
-            # Segmentation file should end with specified formats above
-            segmentationNode = slicer.util.loadVolume(self.selector3DSegmentation.currentPath,
-                                                      {"singleFile": True, "show": False})
-            
-            # Check if Segmentation file has less than 30 values:
-            if np.unique(slicer.util.arrayFromVolume(segmentationNode)).size > 30:
-              slicer.util.warningDisplay("This file contains more than 30 unique values. ")
-            self.selector3DSegmentation.currentPath = ''
-              
-              
-      
-            # Get array from volume
-            segArray = arrayFromVolume(segmentationNode)
-            uniqueLabels = np.unique(segArray)
-
-            # Check for multi-label (more than just 0 and 1)
-            nonZeroLabels = uniqueLabels[uniqueLabels != 0]
-
-            if len(nonZeroLabels) > 1:
-                # Remap to consecutive label values (e.g., 1, 2, 3, ...)
-                remapDict = {label: i+1 for i, label in enumerate(nonZeroLabels)}
-                for oldVal, newVal in remapDict.items():
-                    
-                    segArray[segArray == oldVal] = newVal
-
-                # Push updated array back into the segmentation node
-                updateVolumeFromArray(segmentationNode, segArray)
-
-            #  Debug: Check what label values actually exist
-            segArray = arrayFromVolume(segmentationNode)
-            uniqueLabels = np.unique(segArray)
-            
-            for val in uniqueLabels:
-                count = np.sum(segArray == val)
-
-
-
-            remappedLabels = list(range(1, len(nonZeroLabels) + 1))
-            self.addAdditionalOverlayColorButtons(remappedLabels, segmentationNode)
-
-            # Continue with existing logic
-            self.logic.clearSliceForegrounds()
-            segmentationNode.SetName("3D Segmentation")
-            # Set a param to hold the 3D segmentation node ID
-            nodeID = shNode.GetItemByDataNode(segmentationNode)
-            self.customParamNode.node3DSegmentation = nodeID
-
-            # Create a label map of the 3D segmentation that will be used to define the mask overlayed
-            # on the 2D images during playback
-            volumesModuleLogic = slicer.modules.volumes.logic()
-            segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', "3D Segmentation Label Map")
-            volumesModuleLogic.CreateLabelVolumeFromVolume(slicer.mrmlScene, segmentationLabelMap, segmentationNode)
-
-            # Set a param to hold the 3D segmentation label map ID
-            labelMapID = shNode.GetItemByDataNode(segmentationLabelMap)
-            self.customParamNode.node3DSegmentationLabelMap = labelMapID
-            
-            
-            # Apply any pending colors that were stored before the label map was created
-            self.applyPendingLabelColors()
-
-
-          else:
-            # Remove filepath for the Segmentation File in the `Inputs` section
-            self.customParamNode.path3DSegmentation = ''
-            if self.selector3DSegmentation.currentPath != '':
-              slicer.util.warningDisplay("Not a valid file format."
-                                      "The file was not loaded into 3D Slicer.", "Input Error")
-            self.selector3DSegmentation.currentPath = ''
-        
+            self.updateTransformsInputsState()
 
                               
         if caller == "applyTransformsButton" and event == "clicked":
+
+          if self.isPrewarpedMode():
+              self.applyPrewarpedMode(shNode)
+              return  # try/finally still runs EndModify + GUI refresh
 
           hasSegmentation = bool(self.customParamNode.path3DSegmentation)
           if not hasSegmentation:
@@ -1445,13 +1552,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
                 # Load first image of the sequence when all required inputs are satisfied
                 self.resetVisuals()
-                shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-                originalSegNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentation)
-                # For 2D images, visualize() already jumps to the correct image depth.
-                # centerOnSeg would overwrite that jump, so we skip it here.
-                proxy2DImageNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(self.customParamNode.sequenceNode2DImages)
-                if proxy2DImageNode.GetImageData().GetDataDimension() != 2:
-                    self.logic.centerOnSeg(originalSegNode)
                 
                 
             else:
@@ -1520,11 +1620,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 )
                 # resetVisuals() calls visualize() internally — no second call needed
                 self.resetVisuals()
-                shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-                originalSegNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentation)
-                proxy2DImageNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(self.customParamNode.sequenceNode2DImages)
-                if proxy2DImageNode.GetImageData().GetDataDimension() != 2:
-                    self.logic.centerOnSeg(originalSegNode)
                 return
 
             else: 
@@ -1561,7 +1656,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
               
               transforms = [sitk.ReadTransform(path) for path in self.deformationFieldPaths]
               # Create a progress/loading bar to display the progress of the deformation process
-              progressDialog = qt.QProgressDialog("Applying deformation field", "Cancel",
+              progressDialog = qt.QProgressDialog("Applying Transformation", "Cancel",
                                                   0, len(transforms))
               progressDialog.minimumDuration = 0
 
@@ -1584,16 +1679,20 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                       deformedMaskArray = sitk.GetArrayFromImage(deformedMask)
                       slicer.util.updateVolumeFromArray(volumeNode, deformedMaskArray)
                       
-                      # Copy the image properties from the original mask
-                      volumeNode.SetOrigin(mask.GetOrigin())
+                      # Copy the image properties from the original mask.
+                      # SimpleITK reports geometry in LPS; Slicer stores RAS.
+                      # RAS = diag(-1,-1,1) * LPS, so negate the X and Y
+                      # components of both the origin and the direction matrix.
+                      lpsOrigin = mask.GetOrigin()
+                      volumeNode.SetOrigin(-lpsOrigin[0], -lpsOrigin[1], lpsOrigin[2])
                       volumeNode.SetSpacing(mask.GetSpacing())
-                      
-                      # Set the image direction
+
                       direction = mask.GetDirection()
                       vtkMatrix = vtk.vtkMatrix4x4()
                       for row in range(3):
+                          sign = -1.0 if row < 2 else 1.0
                           for col in range(3):
-                              vtkMatrix.SetElement(row, col, direction[row * 3 + col])
+                              vtkMatrix.SetElement(row, col, sign * direction[row * 3 + col])
                       volumeNode.SetIJKToRASDirectionMatrix(vtkMatrix)
                       
                       deformedMaskSequenceNode.SetDataNodeAtValue(volumeNode, str(i))
@@ -1650,6 +1749,83 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.customParamNode.EndModify(wasModified)
       self._updatingGUIFromParameterNode = False
       self.updateGUIFromParameterNode()  # refresh UI now that loading is done
+
+  def applyPrewarpedMode(self, shNode):
+    segFiles = sorted(self.customParamNode.files3DSegmentations)
+    numImages = self.customParamNode.totalImages
+
+    # Hard enforcement: exactly one mask per cine image
+    if len(segFiles) != numImages:
+        slicer.util.errorDisplay(
+            f"Number of segmentation files ({len(segFiles)}) must match the "
+            f"number of cine images ({numImages}).\n"
+            "Load either exactly one segmentation, or one segmentation file for each cine image.",
+            "Input Error")
+        return
+
+    # Remove leftovers from a previous Apply
+    for className, name in [("vtkMRMLSequenceNode", "Per-Frame Mask Sequence"),
+                            ("vtkMRMLScalarVolumeNode", "3D Segmentation"),
+                            ("vtkMRMLLabelMapVolumeNode", "3D Segmentation Label Map")]:
+        nodes = slicer.mrmlScene.GetNodesByClassByName(className, name)
+        nodes.UnRegister(None)
+        for i in range(nodes.GetNumberOfItems()):
+            slicer.mrmlScene.RemoveNode(nodes.GetItemAsObject(i))
+
+    # Load all masks as individual frames into a sequence node.
+    masksSequenceNode, cancelled = self.logic.loadMasksIntoSequenceNode(shNode, segFiles)
+    if cancelled or masksSequenceNode is None:
+        return
+    self.customParamNode.deformedMaskSequenceNode = masksSequenceNode
+
+    # Load the first mask separately as the display anchor: visualize() drives
+    # color table / outline / thickness through this label map, and
+    # _applyTransformToLabelMap swaps its image data every frame.
+    segmentationNode = slicer.util.loadVolume(segFiles[0], {"singleFile": True, "show": False})
+    segmentationNode.SetName("3D Segmentation")
+    self.customParamNode.node3DSegmentation = shNode.GetItemByDataNode(segmentationNode)
+
+    volumesModuleLogic = slicer.modules.volumes.logic()
+    segmentationLabelMap = slicer.mrmlScene.AddNewNodeByClass(
+        'vtkMRMLLabelMapVolumeNode', "3D Segmentation Label Map")
+    volumesModuleLogic.CreateLabelVolumeFromVolume(
+        slicer.mrmlScene, segmentationLabelMap, segmentationNode)
+    self.customParamNode.node3DSegmentationLabelMap = shNode.GetItemByDataNode(segmentationLabelMap)
+
+    # Color buttons based on the first mask's labels
+    segArray = arrayFromVolume(segmentationNode)
+    nonZeroLabels = np.unique(segArray)
+    nonZeroLabels = nonZeroLabels[nonZeroLabels != 0]
+    self.addAdditionalOverlayColorButtons(
+        list(range(1, len(nonZeroLabels) + 1)), segmentationNode)
+    self.applyPendingLabelColors()
+    self.logic.clearSliceForegrounds()
+
+    # Playback setup — mirrors the Displacement Field path
+    sequenceBrowserNode = slicer.mrmlScene.AddNewNodeByClass(
+        "vtkMRMLSequenceBrowserNode", "Sequence Browser")
+    sequenceBrowserNode.AddSynchronizedSequenceNode(self.customParamNode.sequenceNode2DImages)
+    sequenceBrowserNode.AddSynchronizedSequenceNode(masksSequenceNode)
+    sequenceBrowserNode.SetRecording(masksSequenceNode, False)
+    sequenceBrowserNode.SetPlayback(masksSequenceNode, True)
+    sequenceBrowserNode.SetSelectedItemNumber(0)
+    sequenceBrowserNode.SetPlaybackRateFps(self.customParamNode.fps)
+
+    self.addObserver(sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent,
+                     self.updateGUIFromParameterNode)
+    self.customParamNode.sequenceBrowserNode = sequenceBrowserNode
+
+    # Clean up any leftover browser from a previous Apply
+    nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSequenceBrowserNode")
+    nodes.UnRegister(None)
+    if nodes.GetNumberOfItems() == 2:
+        slicer.mrmlScene.RemoveNode(nodes.GetItemAsObject(0))
+
+    self.overlayThicknessSlider.enabled = True
+    self.logic.buildOrientationMap(sequenceBrowserNode,
+                                   self.customParamNode.sequenceNode2DImages,
+                                   slicer.app.layoutManager())
+    self.resetVisuals()
 
   def onTransformsFilePathChange(self):
     
@@ -2227,6 +2403,14 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       selectedFiles = fileDialog.selectedFiles()
       selectedFiles = sorted(list(selectedFiles))
       self.selector2DImagesFiles.addPaths(selectedFiles)
+  
+  def onBrowseSegmentationFiles(self):
+    fileDialog = qt.QFileDialog()
+    fileDialog.setFileMode(qt.QFileDialog.ExistingFiles)
+    supportedFormats = ["*.mha", "*.dcm", "*.nrrd", "*.nii", "*.hdr", "*.img", "*.nhdr", "*.nii.gz"]
+    fileDialog.setNameFilter("Supported Files ({})".format(" ".join(supportedFormats)))
+    if fileDialog.exec():
+        self.selector3DSegmentationFiles.addPaths(sorted(list(fileDialog.selectedFiles())))
 
   def onDeleteImagesButton(self):
     # Removes the cine images from the multi file selector
@@ -2312,14 +2496,14 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # 1) Block signals while we clear pickers (prevents handlers from firing)
     widgets = []
-    for w in ["selector2DImagesFiles", "selector3DSegmentation", "selectorTransformsFile", "deformationFileSelector"]:
+    for w in ["selector2DImagesFiles", "selector3DSegmentationFiles", "selectorTransformsFile", "deformationFileSelector"]:
         if hasattr(self, w) and getattr(self, w) is not None:
             widgets.append(getattr(self, w))
     prev_sig = [w.blockSignals(True) for w in widgets]
 
     # 2) Clear inputs (pickers + derived UI)
     if hasattr(self, "selector2DImagesFiles"): self.selector2DImagesFiles.clear()
-    if hasattr(self, "selector3DSegmentation"): self.selector3DSegmentation.setCurrentPath('')
+    if hasattr(self, "selector3DSegmentationFiles"): self.selector3DSegmentationFiles.clear()
     if hasattr(self, "selectorTransformsFile"): self.selectorTransformsFile.setCurrentPath('')
     if hasattr(self, "deformationFileSelector"): self.deformationFileSelector.clear()
 
@@ -2350,9 +2534,10 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     if hasattr(self, "pendingLabelColors") and isinstance(self.pendingLabelColors, dict):
         self.pendingLabelColors.clear()
 
-    # 4) Wipe  state so next run is clean
+    # 4) Wipe state so next run is clean
     if self.customParamNode:
         self.customParamNode.files2DImages = []
+        self.customParamNode.files3DSegmentations = []
         self.deformationFieldPaths = []
         self.customParamNode.totalImages = 0
         self.customParamNode.path3DSegmentation = ""
@@ -2361,7 +2546,15 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.customParamNode.transformsFilePath = ""
         self.customParamNode.sequenceNode2DImages = None
         self.customParamNode.sequenceNodeTransforms = None
+
+        # Remove the per-frame mask sequence node from the scene (not just the reference),
+        # otherwise it lingers and the name-based cleanup on the next Apply gets confused
+        nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLSequenceNode", "Per-Frame Mask Sequence")
+        nodes.UnRegister(None)
+        for i in range(nodes.GetNumberOfItems()):
+            slicer.mrmlScene.RemoveNode(nodes.GetItemAsObject(i))
         self.customParamNode.deformedMaskSequenceNode = None
+
         self.customParamNode.sequenceBrowserNode = None
         # reset overlay look
         self.customParamNode.overlayAsOutline = True
@@ -2421,6 +2614,9 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     if hasattr(self, "updateGUIFromParameterNode"):
         self.updateGUIFromParameterNode()
 
+    # Re-enable transforms inputs now that pre-warped mode is cleared
+    self.updateTransformsInputsState()
+
     self.resetVisuals()
 
 
@@ -2444,7 +2640,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         show=False,
         customParamNode=self.customParamNode,
         deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-        transformType=self.transformTypeDropdown.currentText
+        transformType=self.getEffectiveTransformType()
     )
     self.editSliceView(imageDict)
 
@@ -2467,7 +2663,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         show=False,
         customParamNode=self.customParamNode,
         deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-        transformType=self.transformTypeDropdown.currentText
+        transformType=self.getEffectiveTransformType()
     )
     self.editSliceView(imageDict)
 
@@ -2492,7 +2688,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         show=False,
         customParamNode=self.customParamNode,
         deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-        transformType=self.transformTypeDropdown.currentText
+        transformType=self.getEffectiveTransformType()
     )
     self.editSliceView(imageDict)
     
@@ -2576,13 +2772,15 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.deleteSegmentationButton.enabled = True
         self.deleteTransformsButton.enabled = True
 
-        # Enable column selectors
-        self.columnXSelector.enabled = True
-        self.columnYSelector.enabled = True
-        self.columnZSelector.enabled = True
-        self.columnXSelector.setToolTip("")
-        self.columnYSelector.setToolTip("")
-        self.columnZSelector.setToolTip("")
+        # Enable column selectors — but never in pre-warped mode,
+        # where transforms inputs must stay disabled
+        if not self.isPrewarpedMode():
+          self.columnXSelector.enabled = True
+          self.columnYSelector.enabled = True
+          self.columnZSelector.enabled = True
+          self.columnXSelector.setToolTip("")
+          self.columnYSelector.setToolTip("")
+          self.columnZSelector.setToolTip("")
 
         if self.atLastImage():
           #self.nextFrameButton.setToolTip("Move to the previous frame.") - may add a different tooltip at last image
@@ -2739,8 +2937,14 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                                     show=False,
                                     customParamNode=self.customParamNode,
                                     deformedMaskSequenceNode=self.customParamNode.deformedMaskSequenceNode,
-                                    transformType=self.transformTypeDropdown.currentText
+                                    transformType=self.getEffectiveTransformType()
                                 )
+        shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+        originalSegNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentation)
+        proxy2DImageNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(
+            self.customParamNode.sequenceNode2DImages)
+        if proxy2DImageNode.GetImageData().GetDataDimension() != 2:
+            self.logic.centerOnSeg(originalSegNode)
       else:
         # new images-only path
         self.logic.visualizeImagesOnly(

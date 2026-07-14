@@ -151,6 +151,48 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
     return imagesSequenceNode, False
 
+  def loadMasksIntoSequenceNode(self, shNode, paths):
+    """
+    Loads pre-warped segmentation masks (one per cine frame) into a sequence node
+    as individual label map frames.
+    """
+    masksSequenceNode = None
+    fileFormats = ['.*\\.mha', '.*\\.dcm', '.*\\.nrrd', '.*\\.nii', '.*\\.hdr', '.*\\.nhdr', '.*\\.mhd']
+    maskFiles = sorted(p for p in paths
+                       if any(re.match(f, p) for f in fileFormats))
+
+    if len(maskFiles) != 0:
+        masksSequenceNode = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLSequenceNode", "Per-Frame Mask Sequence")
+
+        progressDialog = qt.QProgressDialog("Applyin segmentations per cine image", "Cancel",
+                                            0, len(maskFiles))
+        progressDialog.minimumDuration = 0
+
+        for fileIndex in range(len(maskFiles)):
+            if progressDialog.wasCanceled:
+                slicer.mrmlScene.RemoveNode(masksSequenceNode)
+                return None, True
+
+            filepath = maskFiles[fileIndex]
+            # "singleFile": True is essential — without it the archetype reader
+            # stacks the per-frame masks into a single 3D volume.
+            loadedMaskNode = slicer.util.loadVolume(
+                filepath, {"singleFile": True, "show": False, "labelmap": True})
+            loadedMaskNode.SetName(f"Mask {fileIndex + 1} ({os.path.basename(filepath)})")
+
+            masksSequenceNode.SetDataNodeAtValue(loadedMaskNode, str(fileIndex))
+            shNode.RemoveItem(shNode.GetItemByDataNode(loadedMaskNode))
+
+            progressDialog.setValue(fileIndex + 1)
+            slicer.util.forceRenderAllViews()
+            slicer.app.processEvents()
+
+        print(f"{len(maskFiles)} pre-warped masks were loaded into 3D Slicer")
+        self.clearSliceForegrounds()
+
+    return masksSequenceNode, False
+  
   def getColumnNamesFromTransformsInput(self, filepath):
       
     fileName = os.path.basename(filepath)
@@ -387,7 +429,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
                                                                 "Transform Nodes Sequence")
 
     # Create a progress/loading bar to display the progress of the node creation process
-    progressDialog = qt.QProgressDialog("Creating Transform Nodes From Transformation Data", "Cancel",
+    progressDialog = qt.QProgressDialog("Applying Transformation", "Cancel",
                                         0, numImages)
     progressDialog.minimumDuration = 0
 
@@ -818,19 +860,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           if sliceViewWindow.cornerAnnotation().HasObserver(vtk.vtkCornerAnnotation.UpperLeft):
             sliceViewWindow.cornerAnnotation().RemoveAllObservers()
 
-        # Enable alignment of the 3D segmentation label map according to the transform data so that
-        # the 3D segmentation label map overlays upon the ROI of the 2D images
-        if transformType == "Translation":
-            if proxyTransformNode is not None:
-                labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
-        elif transformType == "Displacement Field":
-            if deformedMaskSequenceNode is not None:
-                proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
-                if proxyDeformedMaskNode is not None:
-                    labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
-                    labelMapNode.SetAndObserveTransformNodeID(None)
-
-
         # Render changes
         # Force display node to update first
         displayNode = labelMapNode.GetDisplayNode()
@@ -858,6 +887,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
             proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
             if proxyDeformedMaskNode is not None:
                 labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
+                labelMapNode.SetOrigin(proxyDeformedMaskNode.GetOrigin())
+                labelMapNode.SetSpacing(proxyDeformedMaskNode.GetSpacing())
+                ijkToRAS = vtk.vtkMatrix4x4()
+                proxyDeformedMaskNode.GetIJKToRASDirectionMatrix(ijkToRAS)
+                labelMapNode.SetIJKToRASDirectionMatrix(ijkToRAS)
                 labelMapNode.SetAndObserveTransformNodeID(None)
 
   def visualizeImagesOnly(self, sequenceBrowser, sequenceNode2DImages):
@@ -922,14 +956,29 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     try:
         # Read the segmentation volume as a numpy array
         labelArray = arrayFromVolume(originalSegNode)
-        # Find all voxels that belong to the segmentation (non-zero values)
-        nonZeroIndices = np.argwhere(labelArray != 0)
-        #If no segmentation voxels exist, there is nothing to center on
-        if len(nonZeroIndices) == 0:
+        print(np.unique(labelArray)) 
+        # Pick which structure to center on: the label with the most voxels.
+        # Averaging across ALL labels lands the point in the gap between separate
+        # structures, so we isolate one structure first.
+        labels = np.unique(labelArray)
+        labels = labels[labels != 0]          # drop background
+        if len(labels) == 0:
             print("centerOnSeg: no non-zero voxels found, skipping.")
             return
-        # Compute the average position of all segmentation voxels
-        centerIJK = nonZeroIndices.mean(axis=0) 
+
+        largestLabel = None
+        largestCount = 0
+        for label in labels:
+            count = np.count_nonzero(labelArray == label)
+            if count > largestCount:
+                largestCount = count
+                largestLabel = label
+
+        # Centroid of ONLY the largest structure's voxels
+        nonZeroIndices = np.argwhere(labelArray == largestLabel)
+        centerIJK = nonZeroIndices.mean(axis=0)
+        i, j, k = np.round(centerIJK).astype(int)
+        print(f"label at centroid = {labelArray[i, j, k]}  (0 means it's in a hole)")
 
         # Get the matrix that converts IJK voxel coordinates to RAS world coordinates
         # RAS is the coordinate system Slicer uses for physical space (in mm)
@@ -942,6 +991,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         layoutManager = slicer.app.layoutManager()
         for name in layoutManager.sliceViewNames():
             sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
+            print(f"centerOnSeg jumping {name} to {rasPoint[0]:.1f},{rasPoint[1]:.1f},{rasPoint[2]:.1f}")
             sliceNode.JumpSlice(rasPoint[0], rasPoint[1], rasPoint[2])
 
     except Exception as e:
