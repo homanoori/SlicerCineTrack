@@ -395,7 +395,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # Sequence layout
     self.sliderWidget = qt.QWidget()
-    self.sliderWidget.setMinimumHeight(50)
+    self.sliderWidget.setMinimumHeight(35)
     self.sliderLayout = qt.QHBoxLayout()
     self.sliderWidget.setLayout(self.sliderLayout)
     self.sequenceFormLayout.addWidget(self.sliderWidget)
@@ -506,7 +506,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.overlayColoursFormLayout = qt.QFormLayout(overlayColoursCollapsibleButton)
     # Visual controls layout
     self.visualControlsWidget = qt.QWidget()
-    self.visualControlsWidget.setMinimumHeight(30)
+    self.visualControlsWidget.setMinimumHeight(27)
     self.visualControlsLayout = qt.QHBoxLayout()
     self.visualControlsLayout.setAlignment(qt.Qt.AlignLeft)
     self.visualControlsWidget.setLayout(self.visualControlsLayout)
@@ -543,20 +543,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.opacityPercentageLabel.setContentsMargins(0, 0, 0, 0)
     self.visualControlsLayout.addWidget(self.opacityPercentageLabel)
     
-    # Break this to next line to avoid over flowing UI
-    # Visual controls layout 2 
-    self.visualControlsWidget2 = qt.QWidget()
-    self.visualControlsWidget2.setMinimumHeight(30)
-    self.visualControlsLayout2 = qt.QHBoxLayout()
-    self.visualControlsLayout2.setAlignment(qt.Qt.AlignLeft)
-    self.visualControlsWidget2.setLayout(self.visualControlsLayout2)
-    self.overlayColoursFormLayout.addWidget(self.visualControlsWidget2)
 
     # Overlay thickness slider
     self.overlayThicknessLabel = qt.QLabel("Overlay Thickness:")
     self.overlayThicknessLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
     self.overlayThicknessLabel.setContentsMargins(20, 0, 10, 0)
-    self.visualControlsLayout2.addWidget(self.overlayThicknessLabel)
+    self.visualControlsLayout.addWidget(self.overlayThicknessLabel)
 
     self.overlayThicknessSlider = ctk.ctkSliderWidget()
     self.overlayThicknessSlider.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
@@ -565,7 +557,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.overlayThicknessSlider.value = 4
     self.overlayThicknessSlider.singleStep = 1
     self.overlayThicknessSlider.enabled = False
-    self.visualControlsLayout2.addWidget(self.overlayThicknessSlider)
+    self.visualControlsLayout.addWidget(self.overlayThicknessSlider)
 
     # Layout for color picker
     self.overlayColoursLayout = qt.QGridLayout()
