@@ -157,7 +157,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # 2D time series image data multi file selector
     self.selector2DImagesFiles = ctk.ctkPathListWidget()
     self.selector2DImagesFiles.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
-    self.selector2DImagesFiles.setMaximumHeight(100)
+    self.selector2DImagesFiles.setMaximumHeight(75)
 
     # Create buttons for browsing and deleting images
     self.deleteImagesButton = qt.QPushButton("X")
@@ -208,8 +208,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.selectorImageFilesLayout.setContentsMargins(0, 0, 0, 2)
     self.selectorImageFilesLayout.setAlignment(qt.Qt.AlignLeft)
     self.selectorImageFilesLayout.addWidget(self.selector2DImagesFiles)
-    self.selectorImageFilesLayout.addLayout(self.buttonsLayout)
-
+    self.selectorImageFilesLayout.addWidget(self.browseImagesButton)
+    self.selectorImageFilesLayout.addWidget(self.viewMoreButton)
+    self.selectorImageFilesLayout.addWidget(self.deleteImagesButton)
+    
+    spacerRowCine = qt.QSpacerItem(0, 3, qt.QSizePolicy.Minimum, qt.QSizePolicy.Fixed)
+    self.inputsFormLayout.addItem(spacerRowCine)
     self.inputsFormLayout.addRow("Cine Image Files: ", self.selectorImageFilesLayout)
 
     # Set tooltips for the widgets
@@ -221,7 +225,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.selector3DSegmentationFiles = ctk.ctkPathListWidget()
     self.selector3DSegmentationFiles.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
-    self.selector3DSegmentationFiles.setMaximumHeight(100)
+    self.selector3DSegmentationFiles.setMaximumHeight(75)
     self.selector3DSegmentationFiles.setToolTip(
         "Select one segmentation file, or one per cine image for pre-warped playback.")
 
@@ -233,18 +237,35 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.deleteSegmentationButton.setFixedSize(qt.QSize(25, 25))
     self.deleteSegmentationButton.setToolTip("Remove segmentation file(s).")
 
+    # View More button for segmentation (mirrors the cine one)
+    self.viewMoreSegButton = qt.QPushButton()
+    self.viewMoreSegButton.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed)
+    self.viewMoreSegButton.setFixedSize(qt.QSize(28, 26))
+    self.viewMoreSegButton.setToolTip("View all selected files")
+    # give it the same icon cine currently has
+    isDark = slicer.app.palette().color(qt.QPalette.Window).lightness() < 128
+    iconPath = os.path.join(self.mediaIconsPath, 'ViewMore.png' if isDark else 'ViewMore2.png')
+    self.viewMoreSegButton.setIcon(qt.QIcon(iconPath))
+    self.viewMoreSegButton.setIconSize(qt.QSize(24, 19))
+
     self.selectorSegmentationLayout = qt.QHBoxLayout()
     self.selectorSegmentationLayout.setSpacing(0)
-    self.selectorSegmentationLayout.setAlignment(qt.Qt.AlignLeft)
+    self.selectorSegmentationLayout.setAlignment(qt.Qt.AlignLeft | qt.Qt.AlignTop)
     self.selectorSegmentationLayout.addWidget(self.selector3DSegmentationFiles)
     self.selectorSegmentationLayout.addWidget(self.browseSegmentationButton)
+    self.selectorSegmentationLayout.addWidget(self.viewMoreSegButton)
     self.selectorSegmentationLayout.addWidget(self.deleteSegmentationButton)
+    spacerRowSeg = qt.QSpacerItem(0, 3, qt.QSizePolicy.Minimum, qt.QSizePolicy.Fixed)
+    self.inputsFormLayout.addItem(spacerRowSeg)
     self.inputsFormLayout.addRow("Segmentation File(s): ", self.selectorSegmentationLayout)
 
     #  Dropdown: Transform Type 
 
     self.transformTypeDropdown = qt.QComboBox()
     self.transformTypeDropdown.addItems(["Translation", "Displacement Field"])
+    # Small vertical gap above Transform Type
+    spacerRow = qt.QSpacerItem(0, 5, qt.QSizePolicy.Minimum, qt.QSizePolicy.Fixed)
+    self.inputsFormLayout.addItem(spacerRow)
     self.inputsFormLayout.addRow("Transform Type: ", self.transformTypeDropdown)
 
     # when changed selection signal to run onTransformTypeChanged
@@ -524,7 +545,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.visualControlsLayout.addWidget(self.overlayOutlineOnlyBox)
 
     # Opacity labels and slider widget
-    self.opacityLabel = qt.QLabel("Overlay Opacity:")
+    self.opacityLabel = qt.QLabel(" Opacity:")
     self.opacityLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
     self.opacityLabel.setContentsMargins(20, 0, 10, 0)
     self.visualControlsLayout.addWidget(self.opacityLabel)
@@ -545,7 +566,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
 
     # Overlay thickness slider
-    self.overlayThicknessLabel = qt.QLabel("Overlay Thickness:")
+    self.overlayThicknessLabel = qt.QLabel("Thickness:")
     self.overlayThicknessLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
     self.overlayThicknessLabel.setContentsMargins(20, 0, 10, 0)
     self.visualControlsLayout.addWidget(self.overlayThicknessLabel)
@@ -610,7 +631,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.resetButton.connect("clicked(bool)", self.onResetButton)
     self.browseImagesButton.clicked.connect(self.onMultiFileBrowse)
     self.browseSegmentationButton.clicked.connect(self.onBrowseSegmentationFiles)
-    self.viewMoreButton.clicked.connect(self.onViewMoreClicked)
+    self.viewMoreButton.clicked.connect(lambda: self.onViewMoreClicked(self.selector2DImagesFiles))
     self.deleteImagesButton.clicked.connect(self.onDeleteImagesButton)
     #self.overlayColorButton.connect('clicked(bool)', self.onOverlayColorPicker)
     self.overlayThicknessSlider.connect("valueChanged(double)", self.onOverlayThicknessChange)
@@ -623,6 +644,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       lambda *args: self.updateParameterNodeFromGUI("selector3DSegmentationFiles", "pathsChanged"))
     self.selectorTransformsFile.connect("currentPathChanged(QString)", \
       self.onTransformsFilePathChange)
+    self.viewMoreSegButton.clicked.connect(lambda: self.onViewMoreClicked(self.selector3DSegmentationFiles))       
 
     self.columnXSelector.connect("currentTextChanged(QString)", self.onColumnXSelectorChange)
     self.columnYSelector.connect("currentTextChanged(QString)", self.onColumnXSelectorChange)
@@ -2383,6 +2405,9 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       icon = qt.QIcon(iconPath)
       self.viewMoreButton.setIcon(icon)
       self.viewMoreButton.setIconSize(qt.QSize(24, 19))
+      if hasattr(self, 'viewMoreSegButton'):
+            self.viewMoreSegButton.setIcon(icon)
+            self.viewMoreSegButton.setIconSize(qt.QSize(24, 19))
 
   def onMultiFileBrowse(self):
     # Opens a file dialogue for the user to select cine images
@@ -2421,7 +2446,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     displayNode.SetSliceIntersectionThickness(self.customParamNode.overlayThickness)
 
 
-  def onViewMoreClicked(self):
+  def onViewMoreClicked(self, selector):
     # Opens up a dialog displaying selected files when the user clicks "View More"
     dialog = qt.QDialog()
     dialog.setWindowTitle("Selected Files")
@@ -2437,7 +2462,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     tableWidget.setAlternatingRowColors(True)
 
     # Populate the table
-    for path in self.selector2DImagesFiles.paths:
+    for path in selector.paths:
         rowPosition = tableWidget.rowCount
         tableWidget.insertRow(rowPosition)
         tableWidget.setItem(rowPosition, 0, qt.QTableWidgetItem(os.path.basename(path)))
