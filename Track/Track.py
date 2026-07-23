@@ -39,6 +39,28 @@ from utils.Helper import SpinBox, Slider
 from utils.TrackLogic import TrackLogic
 from typing import List
 from slicer.util import arrayFromVolume, updateVolumeFromArray
+
+#
+# Panel ratio event filter
+#
+
+
+class _PanelRatioEventFilter(qt.QObject):
+  """
+  Watches the main window for resize events and re-applies the module panel
+  width ratio (30% panel : 70% slice views) after each resize.
+  """
+
+  def __init__(self, applyRatioCallback, parent=None):
+    super().__init__(parent)
+    self._applyRatioCallback = applyRatioCallback
+
+  def eventFilter(self, obj, event):
+    if event.type() == qt.QEvent.Resize:
+      # Defer until the resize has been processed so widths are up to date
+      qt.QTimer.singleShot(0, self._applyRatioCallback)
+    return False  # never consume the event
+  
 #
 # Track
 #
@@ -157,6 +179,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # 2D time series image data multi file selector
     self.selector2DImagesFiles = ctk.ctkPathListWidget()
     self.selector2DImagesFiles.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
+    self.selector2DImagesFiles.setMinimumWidth(95)
     self.selector2DImagesFiles.setMaximumHeight(75)
 
     # Create buttons for browsing and deleting images
@@ -225,6 +248,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.selector3DSegmentationFiles = ctk.ctkPathListWidget()
     self.selector3DSegmentationFiles.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
+    self.selector3DSegmentationFiles.setMinimumWidth(95)
     self.selector3DSegmentationFiles.setMaximumHeight(75)
     self.selector3DSegmentationFiles.setToolTip(
         "Select one segmentation file, or one per cine image for pre-warped playback.")
@@ -263,6 +287,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.transformTypeDropdown = qt.QComboBox()
     self.transformTypeDropdown.addItems(["Translation", "Displacement Field"])
+    self.transformTypeDropdown.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
+    self.transformTypeDropdown.setMinimumWidth(95)
     # Small vertical gap above Transform Type
     spacerRow = qt.QSpacerItem(0, 5, qt.QSizePolicy.Minimum, qt.QSizePolicy.Fixed)
     self.inputsFormLayout.addItem(spacerRow)
@@ -276,7 +302,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.deformationFileSelector = ctk.ctkPathListWidget()
     self.deformationFileSelector.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
-    self.deformationFileSelector.setMaximumHeight(100)
+    self.deformationFileSelector.setMinimumWidth(95)
+    self.deformationFileSelector.setMaximumHeight(75)
     self.deformationFileSelector.setToolTip("Select one .h5/.hdf5 file for each cine image.")
 
    
@@ -360,10 +387,17 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.columnZSelectorLabel = qt.QLabel("Z_Dicom:")
     self.columnZSelectorLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
 
+    comboHeight = self.selectorTransformsFile.sizeHint.height()
+    for combo in (self.columnXSelector, self.columnYSelector, self.columnZSelector):
+      combo.setSizeAdjustPolicy(qt.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+      combo.setMinimumContentsLength(3)
+      combo.setFixedHeight(comboHeight)
+
     
     ## Widget and Layout setup for columns selectors
 
     self.columnSelectorsLayout = qt.QHBoxLayout()
+    self.columnSelectorsLayout.setSpacing(3)
     self.columnSelectorsLayout.addWidget(self.columnXSelectorLabel)
     self.columnSelectorsLayout.addWidget(self.columnXSelector)
     self.columnSelectorsLayout.addWidget(self.columnYSelectorLabel)
@@ -457,7 +491,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
 
     iconSize = qt.QSize(14, 14)
-    buttonSize = qt.QSize(60, 30)
+    buttonSize = qt.QSize(36, 30)
     mediaIconsPath = os.path.join(os.path.dirname(slicer.util.modulePath(self.__module__)),
                                   'Resources', 'Icons', 'media-control-icons')
 
@@ -504,7 +538,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # Playback speed label and spinbox
     self.playbackSpeedLabel = qt.QLabel("Playback Speed:")
     self.playbackSpeedLabel.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed)
-    self.playbackSpeedLabel.setContentsMargins(20, 0, 10, 0)
+    self.playbackSpeedLabel.setContentsMargins(5, 0, 3, 0)
     self.controlLayout.addWidget(self.playbackSpeedLabel)
     self.playbackSpeedLabel.setToolTip("Modify playback speed in increments of 0.5.")
 
@@ -547,10 +581,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # Opacity labels and slider widget
     self.opacityLabel = qt.QLabel(" Opacity:")
     self.opacityLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
-    self.opacityLabel.setContentsMargins(20, 0, 10, 0)
+    self.opacityLabel.setContentsMargins(5, 0, 3, 0)
     self.visualControlsLayout.addWidget(self.opacityLabel)
 
     self.opacitySlider = ctk.ctkDoubleSlider()
+    self.opacitySlider.setMinimumWidth(43) 
     self.opacitySlider.orientation = qt.Qt.Horizontal
     self.opacitySlider.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
     self.opacitySlider.minimum = 0
@@ -568,10 +603,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # Overlay thickness slider
     self.overlayThicknessLabel = qt.QLabel("Thickness:")
     self.overlayThicknessLabel.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
-    self.overlayThicknessLabel.setContentsMargins(20, 0, 10, 0)
+    self.overlayThicknessLabel.setContentsMargins(5, 0, 3, 0)
     self.visualControlsLayout.addWidget(self.overlayThicknessLabel)
 
     self.overlayThicknessSlider = ctk.ctkSliderWidget()
+    self.overlayThicknessSlider.setMinimumWidth(90) 
     self.overlayThicknessSlider.setSizePolicy(qt.QSizePolicy.Maximum, qt.QSizePolicy.Fixed)
     self.overlayThicknessSlider.minimum = 1
     self.overlayThicknessSlider.maximum = 10
@@ -681,6 +717,68 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # Make sure parameter node is initialized (needed for module reload)
     self.initializeParameterNode()
+    # Resize the module panel to occupy 30% of the main window width
+    # (slice views automatically get the remaining 70%).
+    # singleShot(0) defers this until after the window layout has settled.
+    qt.QTimer.singleShot(0, self.applyPanelRatio)
+    self.installPanelRatioEventFilter()
+
+  def applyPanelRatio(self):
+    """
+    Sets the left module panel to 30% of the main window width as the default.
+    The splitter remains draggable, but never below PANEL_FLOOR_WIDTH, so
+    components are never clipped or overlapped.
+    """
+    PANEL_FLOOR_WIDTH = 480
+
+    mainWindow = slicer.util.mainWindow()
+    if not mainWindow:
+      return
+    panelDockWidget = mainWindow.findChild(qt.QDockWidget, "PanelDockWidget")
+    modulePanel = mainWindow.findChild(qt.QWidget, "ModulePanel")
+    if not panelDockWidget or not modulePanel:
+      return
+    if not hasattr(self, "_panelMinWidth"):
+      contentMin = 0
+      scrollArea = modulePanel.findChild(qt.QScrollArea)
+      if scrollArea and scrollArea.widget():
+        contentMin = scrollArea.widget().minimumSizeHint.width()
+      scrollbarExtent = qt.QApplication.style().pixelMetric(qt.QStyle.PM_ScrollBarExtent)
+      self._panelMinWidth = max(PANEL_FLOOR_WIDTH, contentMin + scrollbarExtent + 4)
+
+    if not hasattr(self, "_originalPanelHPolicy"):
+      self._originalPanelHPolicy = modulePanel.sizePolicy.horizontalPolicy()
+    sizePolicy = modulePanel.sizePolicy
+    sizePolicy.setHorizontalPolicy(qt.QSizePolicy.Ignored)
+    modulePanel.setSizePolicy(sizePolicy)
+    panelDockWidget.setMinimumWidth(self._panelMinWidth)
+    targetWidth = max(int(mainWindow.width * 0.30), self._panelMinWidth)
+    mainWindow.resizeDocks([panelDockWidget], [targetWidth], qt.Qt.Horizontal)
+
+  def releasePanelConstraint(self):
+    """Restores the module panel's original sizing behavior for other modules."""
+    mainWindow = slicer.util.mainWindow()
+    if not mainWindow:
+      return
+    modulePanel = mainWindow.findChild(qt.QWidget, "ModulePanel")
+    if modulePanel and hasattr(self, "_originalPanelHPolicy"):
+      sizePolicy = modulePanel.sizePolicy
+      sizePolicy.setHorizontalPolicy(self._originalPanelHPolicy)
+      modulePanel.setSizePolicy(sizePolicy)
+
+  def installPanelRatioEventFilter(self):
+    """
+    Installs an event filter on the main window so the 30% : 70% split is
+    preserved when the user resizes the application window.
+    """
+    mainWindow = slicer.util.mainWindow()
+    if not mainWindow:
+      return
+    # Avoid stacking duplicate filters when the module is reloaded
+    if getattr(self, "_panelRatioFilter", None):
+      mainWindow.removeEventFilter(self._panelRatioFilter)
+    self._panelRatioFilter = _PanelRatioEventFilter(self.applyPanelRatio, mainWindow)
+    mainWindow.installEventFilter(self._panelRatioFilter)
 
   def isPrewarpedMode(self):
     """True when the user loaded one segmentation per cine image (pre-warped masks)."""
@@ -798,6 +896,13 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     Called when the application closes and the module widget is destroyed.
     """
     self.removeObservers()
+    # Remove the panel ratio event filter so it doesn't linger after reload
+    if getattr(self, "_panelRatioFilter", None):
+      mainWindow = slicer.util.mainWindow()
+      if mainWindow:
+        mainWindow.removeEventFilter(self._panelRatioFilter)
+      self._panelRatioFilter = None
+    self.releasePanelConstraint()
 
   def enter(self):
     """
@@ -805,13 +910,18 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """
     # Make sure parameter node exists and observed
     self.initializeParameterNode()
+    # Re-apply the 30% : 70% panel split when returning to this module
+    qt.QTimer.singleShot(0, self.applyPanelRatio)
 
   def exit(self):
     """
     Called each time the user opens a different module.
     """
-    # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
-    self.removeObserver(self.customParamNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+    if self.customParamNode and self.hasObserver(
+        self.customParamNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode):
+      self.removeObserver(self.customParamNode, vtk.vtkCommand.ModifiedEvent,
+                          self.updateGUIFromParameterNode)
+    self.releasePanelConstraint()
 
   def onSceneStartClose(self, caller, event):
     """
@@ -1738,6 +1848,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
               sequenceBrowserNode.SetPlayback(deformedMaskSequenceNode, True)
               sequenceBrowserNode.SetSelectedItemNumber(0)
               sequenceBrowserNode.SetPlaybackRateFps(10)
+              self.overlayThicknessSlider.enabled = True
 
               layoutManager = slicer.app.layoutManager()
               for name in layoutManager.sliceViewNames():
@@ -2440,10 +2551,23 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   def onOverlayThicknessChange(self):
     # Allows the user to adjust the thickness of the overlay
     self.customParamNode.overlayThickness = int(self.overlayThicknessSlider.value)
-    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-    labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
-    displayNode = labelMapNode.GetDisplayNode()
-    displayNode.SetSliceIntersectionThickness(self.customParamNode.overlayThickness)
+    thickness = self.customParamNode.overlayThickness
+
+    # Translation path: static segmentation label map
+    if self.customParamNode.node3DSegmentationLabelMap:
+      shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+      labelMapNode = shNode.GetItemDataNode(self.customParamNode.node3DSegmentationLabelMap)
+      if labelMapNode and labelMapNode.GetDisplayNode():
+        labelMapNode.GetDisplayNode().SetSliceIntersectionThickness(thickness)
+
+    # Displacement Field path: the proxy node of the deformed mask sequence
+    if self.customParamNode.deformedMaskSequenceNode and self.customParamNode.sequenceBrowserNode:
+      proxyNode = self.customParamNode.sequenceBrowserNode.GetProxyNode(
+          self.customParamNode.deformedMaskSequenceNode)
+      if proxyNode and proxyNode.GetDisplayNode():
+        proxyNode.GetDisplayNode().SetSliceIntersectionThickness(thickness)
+
+    slicer.util.forceRenderAllViews()
 
 
   def onViewMoreClicked(self, selector):
