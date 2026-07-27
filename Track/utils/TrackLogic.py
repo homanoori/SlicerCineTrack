@@ -196,7 +196,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
   def getColumnNamesFromTransformsInput(self, filepath):
       
     fileName = os.path.basename(filepath)
-    fileExtension = os.path.splitext(filepath)[1]
 
     if re.match('.*\\.(csv|xls|xlsx|txt)', filepath):
       # Check that the transforms file is a .csv type
@@ -254,7 +253,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         wb = openpyxl.load_workbook(filepath)
         sheet = wb.active
         headers = next(sheet.iter_rows(values_only=True))
-        # print(headers)
         return headers
       elif filepath.endswith('.xls'):
         try:
@@ -359,7 +357,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
               break
 
       # Check that the transforms file is a .xlsx type
-      elif filepath.endswith('.xlsx') or filepath.endswith('.xlsx'):
+      elif filepath.endswith('.xlsx') :
         openpyxl = __import__('openpyxl')        
         wb = openpyxl.load_workbook(filepath)
         sheet = wb.active
@@ -375,7 +373,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
             x, y, z = map(float, [row[x_index], row[y_index], row[z_index]])
             transformationsList.append([x,y,z])
           except Exception as e:
-            print(e)
             slicer.util.warningDisplay(f"{fileName} file failed to load.\nPlease load a .csv or .txt file instead. ",
                                       "Failed to Load File")
             break
@@ -410,7 +407,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       else:
         # Extension will not create transforms nodes if the number of cine images and
         # the number of rows in the transforms file are not equal
-        print(os.path.basename(filepath))
         slicer.util.warningDisplay(f"Error loading transforms file. Ensure proper formatting and matching number of transforms to cine images",
                            "Validation Error")
         
@@ -450,7 +446,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
       # 3D Slicer uses the RAS (Right, Anterior, Superior) basis for their coordinate system.
       # However, the transformation data we use was generated outside of 3D Slicer, using DICOM
-      # images, which corresponds to the LPS (Left, Prosterier, Superior) basis. In order to use
+      # images, which corresponds to the LPS (Left, Posterier, Superior) basis. In order to use
       # this data, we must convert it from LPS to RAS, in order to correctly transform the images
       # we load into 3D Slicer. See the following links for more detail:
       # https://www.slicer.org/wiki/Coordinate_systems#Anatomical_coordinate_system
@@ -510,12 +506,18 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     """
     Visualizes the image data (2D images and 3D segmentation overlay) within the slice views and
     enables the alignment of the 3D segmentation label map according to the transformation data.
-    :param sequenceBrowser: sequence browser node used to control the playback operation
-    :param sequenceNode2DImages: sequence node containing the 2D images
-    :param segmentationLabelMapID: subject hierarchy ID of the 3D segmentation label map
-    :param sequenceNodeTransforms: sequence node containing the transforms
-    :param opacity: opacity value of overlay layer (3D segmentation label map layer)
-    :param overlayAsOutline: whether to show the overlay as an outline or a filled region
+
+    :param sequenceBrowser: sequence browser node controlling playback
+    :param sequenceNode2DImages: sequence node of the 2D images
+    :param segmentationLabelMapID: subject-hierarchy ID (not a node) of the segmentation label map
+    :param sequenceNodeTransforms: per-frame transforms; None in Displacement Field mode
+    :param opacity: overlay opacity, 0 to 1
+    :param overlayAsOutline: show overlay as outline (True) or filled region (False)
+    :param overlayThickness: overlay outline thickness in pixels
+    :param show: display the "Current Alignment" corner annotation
+    :param customParamNode: the module's CustomParameterNode with current settings
+    :param deformedMaskSequenceNode: per-frame deformed masks; used in Displacement Field mode
+    :param transformType: "Translation" or "Displacement Field"
     """
     shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
     layoutManager = slicer.app.layoutManager()
@@ -535,8 +537,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         displayNode.SetAndObserveColorNodeID(colorNode.GetID())
         colorNode.Modified()
         
-      # NOTE: Removed automatic override of label 1 color to prevent conflicts with user-selected colors
-      # The color buttons should control all label colors, including label 1
 
       displayNode.SetSliceIntersectionThickness(overlayThickness)
       
@@ -772,7 +772,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
             if displayNode:
               displayNode.Modified()
               
-            # CRITICAL: Force volume rendering to update colors
+            # Force volume rendering to update colors
             volumeRenderingLogic = slicer.modules.volumerendering.logic()
             volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(labelMapNode)
             
@@ -956,7 +956,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     try:
         # Read the segmentation volume as a numpy array
         labelArray = arrayFromVolume(originalSegNode)
-        print(np.unique(labelArray)) 
         # Pick which structure to center on: the label with the most voxels.
         # Averaging across ALL labels lands the point in the gap between separate
         # structures, so we isolate one structure first.
@@ -978,7 +977,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         nonZeroIndices = np.argwhere(labelArray == largestLabel)
         centerIJK = nonZeroIndices.mean(axis=0)
         i, j, k = np.round(centerIJK).astype(int)
-        print(f"label at centroid = {labelArray[i, j, k]}  (0 means it's in a hole)")
 
         # Get the matrix that converts IJK voxel coordinates to RAS world coordinates
         # RAS is the coordinate system Slicer uses for physical space (in mm)
@@ -991,7 +989,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         layoutManager = slicer.app.layoutManager()
         for name in layoutManager.sliceViewNames():
             sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
-            print(f"centerOnSeg jumping {name} to {rasPoint[0]:.1f},{rasPoint[1]:.1f},{rasPoint[2]:.1f}")
             sliceNode.JumpSlice(rasPoint[0], rasPoint[1], rasPoint[2])
 
     except Exception as e:
@@ -1027,7 +1024,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
     def reorient_image(image, orientation):
       """
-      Helper function for fixing images oritentation.
+      Helper function for fixing images orientation.
       Reorient the image based on the anatomical orientation.
       """
       if image.GetSize()[0] == 1:

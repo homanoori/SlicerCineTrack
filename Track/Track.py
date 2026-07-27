@@ -40,27 +40,7 @@ from utils.TrackLogic import TrackLogic
 from typing import List
 from slicer.util import arrayFromVolume, updateVolumeFromArray
 
-#
-# Panel ratio event filter
-#
 
-
-class _PanelRatioEventFilter(qt.QObject):
-  """
-  Watches the main window for resize events and re-applies the module panel
-  width ratio (30% panel : 70% slice views) after each resize.
-  """
-
-  def __init__(self, applyRatioCallback, parent=None):
-    super().__init__(parent)
-    self._applyRatioCallback = applyRatioCallback
-
-  def eventFilter(self, obj, event):
-    if event.type() == qt.QEvent.Resize:
-      # Defer until the resize has been processed so widths are up to date
-      qt.QTimer.singleShot(0, self._applyRatioCallback)
-    return False  # never consume the event
-  
 #
 # Track
 #
@@ -117,6 +97,7 @@ class CustomParameterNode:
   overlayColor: list[float] = [0.0, 1.0, 0.0] # [r, g, b] values from 0 to 1
   overlayThickness: int = 4
   deformedMaskSequenceNode: vtkMRMLSequenceNode = None
+
 
 #
 # TrackWidget
@@ -206,7 +187,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # Initial colour of the icon
     self.updateViewMoreIcon()
-    #slicer.app.paletteChanged.connect(self.updateViewMoreIcon)
     slicer.app.paletteChanged.connect(lambda *args: self.updateViewMoreIcon())
 
 
@@ -346,7 +326,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.selectorTransformsFile.showHistoryButton = False
 
     self.deleteTransformsButton = qt.QPushButton("X")  
-    # self.deleteTransformsButton.setIcon(deleteIcon)
     self.deleteTransformsButton.setIconSize(iconSize)
     self.deleteTransformsButton.setFixedSize(buttonSize)
     self.deleteTransformsButton.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed) 
@@ -648,14 +627,12 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.stopSequenceButton.connect("clicked(bool)", self.onStopButton)
     self.nextFrameButton.connect("clicked(bool)", self.onIncrement)
     self.previousFrameButton.connect("clicked(bool)", self.onDecrement)
-    #self.sequenceSlider.connect("valueChanged(int)",
-     #                           lambda: self.currentFrameInputBox.setValue(self.sequenceSlider.value))
+
     self.sequenceSlider.connect("valueChanged(int)",
                             lambda v: self.currentFrameInputBox.setValue(v))
 
     self.sequenceSlider.connect("sliderReleased()", self.onSkipImages)
-    #self.currentFrameInputBox.connect("valueChanged(int)",
-    #                            lambda: self.sequenceSlider.setValue(self.currentFrameInputBox.value))
+
     self.currentFrameInputBox.connect("valueChanged(int)",
                                   lambda v: self.sequenceSlider.setValue(v))
 
@@ -670,7 +647,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.browseSegmentationButton.clicked.connect(self.onBrowseSegmentationFiles)
     self.viewMoreButton.clicked.connect(lambda: self.onViewMoreClicked(self.selector2DImagesFiles))
     self.deleteImagesButton.clicked.connect(self.onDeleteImagesButton)
-    #self.overlayColorButton.connect('clicked(bool)', self.onOverlayColorPicker)
     self.overlayThicknessSlider.connect("valueChanged(double)", self.onOverlayThicknessChange)
 
     # These connections ensure that whenever user changes some settings on the GUI, that is saved
@@ -1217,7 +1193,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 nodeToRemove = nodes.GetItemAsObject(0)
                 slicer.mrmlScene.RemoveNode(nodeToRemove)
                 
-              # This is what isn't working
               # Remove the unused Image Nodes Sequence node, containing each image node, if it exists
               nodes = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "Image Nodes Sequence")
               nodes.UnRegister(None)
@@ -1387,7 +1362,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                                             convert_original_dicom=False)
                             currentPath = segmentationPath
                             self.customParamNode.files3DSegmentations = [segmentationPath]
-                            messageBox.setText(f"Convert DICOM RT_STRUCT successfully. Mask {structure} will now load.")
+                            messageBox.setText(f"Converted DICOM RT_STRUCT successfully. Mask {structure} will now load.")
                             slicer.app.processEvents()
                             qt.QTimer.singleShot(3000, messageBox.accept)
                         except Exception as e:
@@ -1958,7 +1933,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
   def onTransformsFilePathChange(self):
     
-    #TODO - Move these helper functions to another module
     def clearColumnSeletors(self):
       self.columnXSelector.clear()
       self.columnXSelector.enabled = False
@@ -2284,7 +2258,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                             sliceCompositeNode.SetLabelVolumeID(oldLabelVolumeID)
                             sliceCompositeNode.Modified()
 
-                # --- Fix: Update existing 3D rendering transfer functions to match new label colors ---
+                # Update existing 3D rendering transfer functions to match new label colors
                 volumeRenderingLogic = slicer.modules.volumerendering.logic()
                 volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(labelMapNode)
 
@@ -2321,8 +2295,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                             labelInt = int(label)
 
                             # Use the button label index to look up the color the user picked
-                            # This is the key fix: colorNode was updated at index 1 (button label),
-                            # not at index 255 (voxel value) — so we must look up by button label
                             colorIdx = voxelToButtonLabel.get(labelInt, labelInt)
 
                             rgba = [0.0, 0.0, 0.0, 0.0]
@@ -2341,7 +2313,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                         if volumePropertyNode:
                             vtkVP = volumePropertyNode.GetVolumeProperty()
 
-                            # Modify existing CTF/OTF in place — VTK ignores SetColor() on a new object
+                            # VTK ignores SetColor() on a new object
                             ctf = vtkVP.GetRGBTransferFunction()
                             otf = vtkVP.GetScalarOpacity()
 
@@ -2368,8 +2340,6 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                                 labelInt = int(label)
 
                                 # Use the button label index to look up the color the user picked
-                                # This is the key fix: colorNode was updated at index 1 (button label),
-                                # not at index 255 (voxel value) — so we must look up by button label
                                 colorIdx = voxelToButtonLabel.get(labelInt, labelInt)
 
                                 rgba = [0.0, 0.0, 0.0, 0.0]
@@ -2928,13 +2898,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           self.columnZSelector.setToolTip("")
 
         if self.atLastImage():
-          #self.nextFrameButton.setToolTip("Move to the previous frame.") - may add a different tooltip at last image
           self.playSequenceButton.enabled = False
           self.stopSequenceButton.enabled = True
           self.nextFrameButton.enabled = False
           self.previousFrameButton.enabled = True
         elif self.atFirstImage():
-          #self.previousFrameButton.setToolTip("Move to the previous frame.") - may add a different tooltip at first image
           self.playSequenceButton.enabled = True
           self.nextFrameButton.enabled = True
           self.previousFrameButton.enabled = False
@@ -3185,3 +3153,27 @@ class TrackTest(ScriptedLoadableModuleTest):
       self.assertTrue(isinstance(transform, list))
       for num in transform:
         self.assertTrue(isinstance(num, (float)))
+
+
+
+#
+# Panel ratio event filter
+#
+
+
+class _PanelRatioEventFilter(qt.QObject):
+  """
+  Watches the main window for resize events and re-applies the module panel
+  width ratio (30% panel : 70% slice views) after each resize.
+  """
+
+  def __init__(self, applyRatioCallback, parent=None):
+    super().__init__(parent)
+    self._applyRatioCallback = applyRatioCallback
+
+  def eventFilter(self, obj, event):
+    if event.type() == qt.QEvent.Resize:
+      # Defer until the resize has been processed so widths are up to date
+      qt.QTimer.singleShot(0, self._applyRatioCallback)
+    return False  # never consume the event
+  
