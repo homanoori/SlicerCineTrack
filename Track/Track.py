@@ -84,6 +84,7 @@ class Track(ScriptedLoadableModule):
                                 "Jacqueline Banh (laboratory-for-translational-medicine)",
                                 "Nicholas Caro Lopez (laboratory-for-translational-medicine)",
                                 "Venkat Guru Prasad (laboratory-for-translational-medicine)",
+                                "Homa Ahmadinoori (laboratory-for-translational-medicine)"
                                 ]
     self.parent.helpText = """From the input dropdown, select valid 2D cine images in the Cine
     Images Folder, a target to track in the 3D Segmentation File, and a transforms file containing information
