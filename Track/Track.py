@@ -296,6 +296,16 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.deleteDeformationFilesButton.setFixedSize(qt.QSize(25, 25))
     self.deleteDeformationFilesButton.setToolTip("Remove selected deformation field files")
 
+    # View More button for deformation files (mirrors the cine and segmentation ones)
+    self.viewMoreDeformationButton = qt.QPushButton()
+    self.viewMoreDeformationButton.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed)
+    self.viewMoreDeformationButton.setFixedSize(qt.QSize(28, 26))
+    self.viewMoreDeformationButton.setToolTip("View all selected files")
+    isDark = slicer.app.palette().color(qt.QPalette.Window).lightness() < 128
+    iconPath = os.path.join(self.mediaIconsPath, 'ViewMore.png' if isDark else 'ViewMore2.png')
+    self.viewMoreDeformationButton.setIcon(qt.QIcon(iconPath))
+    self.viewMoreDeformationButton.setIconSize(qt.QSize(24, 19))
+
     # Button click functions 
     self.browseDeformationFilesButton.clicked.connect(self.onBrowseDeformationFiles)
     self.deleteDeformationFilesButton.clicked.connect(lambda: self.deformationFileSelector.clear())
@@ -307,12 +317,14 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.deformationFilesLayout.setAlignment(qt.Qt.AlignLeft)
     self.deformationFilesLayout.addWidget(self.deformationFileSelector)
     self.deformationFilesLayout.addWidget(self.browseDeformationFilesButton)
+    self.deformationFilesLayout.addWidget(self.viewMoreDeformationButton)
     self.deformationFilesLayout.addWidget(self.deleteDeformationFilesButton)
 
     self.inputsFormLayout.addRow("Deformation Field Files: ", self.deformationFilesLayout)
     self.deformationFieldLabel = self.inputsFormLayout.labelForField(self.deformationFilesLayout)
     self.deformationFileSelector.hide()
     self.browseDeformationFilesButton.hide()
+    self.viewMoreDeformationButton.hide()
     self.deleteDeformationFilesButton.hide()
     self.deformationFieldLabel.hide()
 
@@ -657,7 +669,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       lambda *args: self.updateParameterNodeFromGUI("selector3DSegmentationFiles", "pathsChanged"))
     self.selectorTransformsFile.connect("currentPathChanged(QString)", \
       self.onTransformsFilePathChange)
-    self.viewMoreSegButton.clicked.connect(lambda: self.onViewMoreClicked(self.selector3DSegmentationFiles))       
+    self.viewMoreSegButton.clicked.connect(lambda: self.onViewMoreClicked(self.selector3DSegmentationFiles))    
+    self.viewMoreDeformationButton.clicked.connect(lambda: self.onViewMoreClicked(self.deformationFileSelector))   
 
     self.columnXSelector.connect("currentTextChanged(QString)", self.onColumnXSelectorChange)
     self.columnYSelector.connect("currentTextChanged(QString)", self.onColumnXSelectorChange)
@@ -786,7 +799,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                  self.selectorTransformsFile, self.deleteTransformsButton,
                  self.columnXSelector, self.columnYSelector, self.columnZSelector,
                  self.deformationFileSelector, self.browseDeformationFilesButton,
-                 self.deleteDeformationFilesButton)
+                 self.viewMoreDeformationButton, self.deleteDeformationFilesButton)
 
       if prewarped:
           reason = ("Transforms are disabled: one segmentation was loaded per cine image, "
@@ -811,6 +824,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           self.deformationFileSelector.setToolTip("Select one .h5/.hdf5 file for each cine image.")
           self.browseDeformationFilesButton.enabled = True
           self.browseDeformationFilesButton.setToolTip("Browse and add deformation field files")
+          self.viewMoreDeformationButton.enabled = True
+          self.viewMoreDeformationButton.setToolTip("View all selected files")
           self.deleteDeformationFilesButton.enabled = True
           self.deleteDeformationFilesButton.setToolTip("Remove selected deformation field files")
 
@@ -821,6 +836,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     if value == "Displacement Field":
         self.deformationFileSelector.show()
         self.browseDeformationFilesButton.show()
+        self.viewMoreDeformationButton.show()
         self.deleteDeformationFilesButton.show()
         self.deformationFieldLabel.show()
 
@@ -841,6 +857,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     else:
         self.deformationFileSelector.hide()
         self.browseDeformationFilesButton.hide()
+        self.viewMoreDeformationButton.hide()
         self.deleteDeformationFilesButton.hide()
         self.deformationFieldLabel.hide()
 
