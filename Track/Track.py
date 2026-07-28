@@ -124,9 +124,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self._updatingGUIFromParameterNode = False
     self.isDarkMode = None
     self.labelColorButtons = {}
+    self._transformApplied = False
 
   def onColumnXSelectorChange(self):
     self.applyTransformButton.enabled = True
+    self._transformApplied = False
     self.transformationAppliedLabel.setVisible(False)
     
   
@@ -308,7 +310,10 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # Button click functions 
     self.browseDeformationFilesButton.clicked.connect(self.onBrowseDeformationFiles)
-    self.deleteDeformationFilesButton.clicked.connect(lambda: self.deformationFileSelector.clear())
+    self.deleteDeformationFilesButton.clicked.connect(
+        lambda: [self.deformationFileSelector.clear(),
+                 setattr(self, "_transformApplied", False),
+                 self.transformationAppliedLabel.setVisible(False)])
 
     # Layout for the deformation file selector + buttons
     self.deformationFilesLayout = qt.QHBoxLayout()
@@ -690,7 +695,10 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       lambda: [self.selector3DSegmentationFiles.clear(),
                self.updateParameterNodeFromGUI("selector3DSegmentationFiles", "pathsChanged")])
     self.deleteTransformsButton.connect("clicked(bool)", \
-      lambda: [self.selectorTransformsFile.setCurrentPath(''), self.updateParameterNodeFromGUI("applyTransformsButton", "clicked")])
+      lambda: [self.selectorTransformsFile.setCurrentPath(''),
+               self.updateParameterNodeFromGUI("applyTransformsButton", "clicked"),
+               setattr(self, "_transformApplied", False),
+               self.transformationAppliedLabel.setVisible(False)])
 
     # These connections will reset the visuals when one of the main inputs are modified
     self.selector2DImagesFiles.connect("currentPathChanged(QString)", self.resetVisuals)
@@ -884,6 +892,8 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
           selectedFiles = sorted(list(selectedFiles))
           self.deformationFileSelector.addPaths(selectedFiles)
           self.deformationFieldPaths = selectedFiles
+          self._transformApplied = False
+          self.transformationAppliedLabel.setVisible(False)
           
   def cleanup(self):
     """
@@ -1867,6 +1877,11 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
               self.updateGUIFromParameterNode()
 
     finally:
+      appliedNow = (caller == "applyTransformsButton" and event == "clicked")
+      hasSegmentation = bool(self.customParamNode.node3DSegmentation)
+      hasTransforms = bool(self.customParamNode.sequenceNodeTransforms or
+                           self.customParamNode.deformedMaskSequenceNode)
+      self._transformApplied = appliedNow and hasSegmentation and hasTransforms
       self.customParamNode.EndModify(wasModified)
       self._updatingGUIFromParameterNode = False
       self.updateGUIFromParameterNode()  # refresh UI now that loading is done
@@ -2001,6 +2016,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         for node in nodes:
             slicer.mrmlScene.RemoveNode(node)
 
+    self._transformApplied = False
     onSequenceChange(self)
 
     clearColumnSeletors(self)
@@ -2853,7 +2869,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.playbackSpeedBox.enabled = True
       # Only show this label when browser actually exists
       hasSequenceBrowser = bool(self.customParamNode.sequenceBrowserNode)
-      self.transformationAppliedLabel.setVisible(hasSequenceBrowser)
+      self.transformationAppliedLabel.setVisible(self._transformApplied)
       
       if hasSequenceBrowser and self.customParamNode.sequenceBrowserNode.GetPlaybackActive():
         # If we are playing
