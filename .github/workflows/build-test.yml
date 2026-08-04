@@ -118,7 +118,7 @@ jobs:
         echo $(ls -latR $EXTENSION_FOLDER/Data)
         echo $(tree $EXTENSION_FOLDER)
     - name: Test SlicerCineTrack
-      uses: coactions/setup-xvfb@v1.0.1
-      with:
-        run:
-          ctest -V --test-dir ${{ steps.SlicerCineTrack-build.outputs.EXTENSION_BUILD_DIR }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb
+        xvfb-run -s "-screen 0 1280x1024x24" ctest -V --test-dir ${{ steps.SlicerCineTrack-build.outputs.EXTENSION_BUILD_DIR }}
