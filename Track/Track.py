@@ -2753,7 +2753,7 @@ class TrackWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     if hasattr(self, "currentFrameInputBox"): self.currentFrameInputBox.setValue(0)
     if hasattr(self, "totalFrameLabel"): self.totalFrameLabel.setText("of 0")
 
-    # 7) One-time fit so Red/Yellow/Green FOVs match (blank state is okay)
+    # 7) One-time fit so Red/Yellow/Green FOVs match
     for name in layoutManager.sliceViewNames():
         layoutManager.sliceWidget(name).fitSliceToBackground()
     slicer.app.processEvents()

@@ -1063,8 +1063,10 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       elif scanOrder == "IS" or scanOrder == "SI":
         imageOrientation = "Axial"
       else:
-        print(f"Error: Unexpected image scan order {scanOrder}.")
-        exit(1)
+        slicer.util.warningDisplay(
+          f"Unexpected image scan order '{scanOrder}'. The image could not be displayed.",
+          "Orientation Error")
+        return None
 
       # Find the slice widget that has the same orientation as the image
       sliceWidget = None
@@ -1073,8 +1075,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           sliceWidget = layoutManager.sliceWidget(name)
 
       if not sliceWidget:
-        print(f"Error: A slice with the {imageOrientation} orientation was not found.")
-        exit(1)
+        slicer.util.warningDisplay(
+          f"No slice view with the {imageOrientation} orientation was found. "
+          f"The image could not be displayed.",
+          "Orientation Error")
+        return None
 
       return sliceWidget
 
