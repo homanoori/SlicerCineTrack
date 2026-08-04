@@ -72,7 +72,7 @@ jobs:
           -DSlicer_USE_PYTHONQT:BOOL=ON \
           -DSlicer_USE_QtTesting:BOOL=OFF \
           -DSlicer_USE_SCIPY:BOOL=OFF \
-          -DSlicer_USE_SimpleITK:BOOL=OFF \
+          -DSlicer_USE_SimpleITK:BOOL=ON \
           -DSlicer_USE_TBB:BOOL=OFF \
           -DSlicer_USE_VTK_DEBUG_LEAKS:BOOL=OFF \
           -S $Slicer_SOURCE_DIR \
