@@ -1,7 +1,8 @@
 import slicer
-# from slicer import ScriptedLoadableModuleLogic
 from slicer.ScriptedLoadableModule import *
+from slicer.util import arrayFromVolume
 import qt, vtk, ctk
+import numpy as np
 
 import os, csv, re
 import SimpleITK as sitk
@@ -32,7 +33,50 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       "Green": self.greenBackground,
       "Yellow": self.yellowBackground
     }
+    self.orientationToView = {}  # maps orientation string → view name, built once at Apply time
+  
+  def buildOrientationMap(self, sequenceBrowserNode, sequenceNode2DImages, layoutManager):
+    """
+    Scans every image in the sequence once and builds a permanent map of
+    orientation → view name. This runs once at Apply time, never per frame.
+    Example result: {"Sagittal": "Yellow", "Coronal": "Green"}
+    """
+    self.orientationToView = {}
+    totalItems = sequenceNode2DImages.GetNumberOfDataNodes()
 
+    for i in range(totalItems):
+      sequenceBrowserNode.SetSelectedItemNumber(i)
+      imageNode = sequenceBrowserNode.GetProxyNode(sequenceNode2DImages)
+      if imageNode is None:
+        continue
+
+      # Compute orientation the same way getSliceWidget does
+      tmpMatrix = vtk.vtkMatrix4x4()
+      imageNode.GetIJKToRASMatrix(tmpMatrix)
+      scanOrder = imageNode.ComputeScanOrderFromIJKToRAS(tmpMatrix)
+
+      if scanOrder in ("LR", "RL"):
+        orientation = "Sagittal"
+      elif scanOrder in ("AP", "PA"):
+        orientation = "Coronal"
+      elif scanOrder in ("IS", "SI"):
+        orientation = "Axial"
+      else:
+        print(f"buildOrientationMap: unrecognized scanOrder {scanOrder} at frame {i}, skipping.")
+        continue
+
+      # Only record the first image of each orientation — the view assignment never changes
+      if orientation not in self.orientationToView:
+        for viewName in layoutManager.sliceViewNames():
+          widget = layoutManager.sliceWidget(viewName)
+          if widget.sliceOrientation == orientation:
+            self.orientationToView[orientation] = viewName
+            break
+
+    # Reset back to frame 0 after scanning
+    sequenceBrowserNode.SetSelectedItemNumber(0)
+
+    
   def setDefaultParameters(self, customParameterNode):
     """
     Initialize parameter node with default settings.
@@ -107,10 +151,51 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
     return imagesSequenceNode, False
 
+  def loadMasksIntoSequenceNode(self, shNode, paths):
+    """
+    Loads pre-warped segmentation masks (one per cine frame) into a sequence node
+    as individual label map frames.
+    """
+    masksSequenceNode = None
+    fileFormats = ['.*\\.mha', '.*\\.dcm', '.*\\.nrrd', '.*\\.nii', '.*\\.hdr', '.*\\.nhdr', '.*\\.mhd']
+    maskFiles = sorted(p for p in paths
+                       if any(re.match(f, p) for f in fileFormats))
+
+    if len(maskFiles) != 0:
+        masksSequenceNode = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLSequenceNode", "Per-Frame Mask Sequence")
+
+        progressDialog = qt.QProgressDialog("Applyin segmentations per cine image", "Cancel",
+                                            0, len(maskFiles))
+        progressDialog.minimumDuration = 0
+
+        for fileIndex in range(len(maskFiles)):
+            if progressDialog.wasCanceled:
+                slicer.mrmlScene.RemoveNode(masksSequenceNode)
+                return None, True
+
+            filepath = maskFiles[fileIndex]
+            # "singleFile": True is essential — without it the archetype reader
+            # stacks the per-frame masks into a single 3D volume.
+            loadedMaskNode = slicer.util.loadVolume(
+                filepath, {"singleFile": True, "show": False, "labelmap": True})
+            loadedMaskNode.SetName(f"Mask {fileIndex + 1} ({os.path.basename(filepath)})")
+
+            masksSequenceNode.SetDataNodeAtValue(loadedMaskNode, str(fileIndex))
+            shNode.RemoveItem(shNode.GetItemByDataNode(loadedMaskNode))
+
+            progressDialog.setValue(fileIndex + 1)
+            slicer.util.forceRenderAllViews()
+            slicer.app.processEvents()
+
+        print(f"{len(maskFiles)} pre-warped masks were loaded into 3D Slicer")
+        self.clearSliceForegrounds()
+
+    return masksSequenceNode, False
+  
   def getColumnNamesFromTransformsInput(self, filepath):
       
     fileName = os.path.basename(filepath)
-    fileExtension = os.path.splitext(filepath)[1]
 
     if re.match('.*\\.(csv|xls|xlsx|txt)', filepath):
       # Check that the transforms file is a .csv type
@@ -168,7 +253,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         wb = openpyxl.load_workbook(filepath)
         sheet = wb.active
         headers = next(sheet.iter_rows(values_only=True))
-        # print(headers)
         return headers
       elif filepath.endswith('.xls'):
         try:
@@ -273,7 +357,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
               break
 
       # Check that the transforms file is a .xlsx type
-      elif filepath.endswith('.xlsx') or filepath.endswith('.xlsx'):
+      elif filepath.endswith('.xlsx') :
         openpyxl = __import__('openpyxl')        
         wb = openpyxl.load_workbook(filepath)
         sheet = wb.active
@@ -289,7 +373,6 @@ class TrackLogic(ScriptedLoadableModuleLogic):
             x, y, z = map(float, [row[x_index], row[y_index], row[z_index]])
             transformationsList.append([x,y,z])
           except Exception as e:
-            print(e)
             slicer.util.warningDisplay(f"{fileName} file failed to load.\nPlease load a .csv or .txt file instead. ",
                                       "Failed to Load File")
             break
@@ -324,12 +407,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       else:
         # Extension will not create transforms nodes if the number of cine images and
         # the number of rows in the transforms file are not equal
-        print(os.path.basename(filepath))
         slicer.util.warningDisplay(f"Error loading transforms file. Ensure proper formatting and matching number of transforms to cine images",
                            "Validation Error")
         
         return None
-
+  
   def createTransformNodesFromTransformData(self, shNode, transforms, numImages):
     """
     For every image and it's matching transformation, create a transform node which will hold
@@ -343,7 +425,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
                                                                 "Transform Nodes Sequence")
 
     # Create a progress/loading bar to display the progress of the node creation process
-    progressDialog = qt.QProgressDialog("Creating Transform Nodes From Transformation Data", "Cancel",
+    progressDialog = qt.QProgressDialog("Applying Transformation", "Cancel",
                                         0, numImages)
     progressDialog.minimumDuration = 0
 
@@ -364,7 +446,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
       # 3D Slicer uses the RAS (Right, Anterior, Superior) basis for their coordinate system.
       # However, the transformation data we use was generated outside of 3D Slicer, using DICOM
-      # images, which corresponds to the LPS (Left, Prosterier, Superior) basis. In order to use
+      # images, which corresponds to the LPS (Left, Posterier, Superior) basis. In order to use
       # this data, we must convert it from LPS to RAS, in order to correctly transform the images
       # we load into 3D Slicer. See the following links for more detail:
       # https://www.slicer.org/wiki/Coordinate_systems#Anatomical_coordinate_system
@@ -419,16 +501,23 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       layoutManager.sliceWidget(viewName).mrmlSliceCompositeNode().SetForegroundVolumeID("None")
 
   def visualize(self, sequenceBrowser, sequenceNode2DImages, segmentationLabelMapID,
-                    sequenceNodeTransforms, opacity, overlayAsOutline, overlayThickness, show=False, customParamNode=None):
+              sequenceNodeTransforms, opacity, overlayAsOutline, overlayThickness,
+              show=False, customParamNode=None, deformedMaskSequenceNode=None, transformType="Translation"):
     """
     Visualizes the image data (2D images and 3D segmentation overlay) within the slice views and
     enables the alignment of the 3D segmentation label map according to the transformation data.
-    :param sequenceBrowser: sequence browser node used to control the playback operation
-    :param sequenceNode2DImages: sequence node containing the 2D images
-    :param segmentationLabelMapID: subject hierarchy ID of the 3D segmentation label map
-    :param sequenceNodeTransforms: sequence node containing the transforms
-    :param opacity: opacity value of overlay layer (3D segmentation label map layer)
-    :param overlayAsOutline: whether to show the overlay as an outline or a filled region
+
+    :param sequenceBrowser: sequence browser node controlling playback
+    :param sequenceNode2DImages: sequence node of the 2D images
+    :param segmentationLabelMapID: subject-hierarchy ID (not a node) of the segmentation label map
+    :param sequenceNodeTransforms: per-frame transforms; None in Displacement Field mode
+    :param opacity: overlay opacity, 0 to 1
+    :param overlayAsOutline: show overlay as outline (True) or filled region (False)
+    :param overlayThickness: overlay outline thickness in pixels
+    :param show: display the "Current Alignment" corner annotation
+    :param customParamNode: the module's CustomParameterNode with current settings
+    :param deformedMaskSequenceNode: per-frame deformed masks; used in Displacement Field mode
+    :param transformType: "Translation" or "Displacement Field"
     """
     shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
     layoutManager = slicer.app.layoutManager()
@@ -436,17 +525,24 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     # The proxy image node represents the current selected image within the sequence
     proxy2DImageNode = sequenceBrowser.GetProxyNode(sequenceNode2DImages)
     # The proxy transform node represents the current selected transform within the sequence
-    proxyTransformNode = sequenceBrowser.GetProxyNode(sequenceNodeTransforms)
+    proxyTransformNode = sequenceBrowser.GetProxyNode(sequenceNodeTransforms) if sequenceNodeTransforms else None
     labelMapNode = shNode.GetItemDataNode(segmentationLabelMapID)
 
     displayNode = labelMapNode.GetDisplayNode()
     if displayNode:
+      # Ensure the color node is properly set and updated
       colorNode = displayNode.GetColorNode()
-      if colorNode and customParamNode and hasattr(customParamNode, 'overlayColor'):
-        colorNode.SetColor(1, *customParamNode.overlayColor)
+      if colorNode:
+        # Force the color node to be re-applied
         displayNode.SetAndObserveColorNodeID(colorNode.GetID())
+        colorNode.Modified()
+        
 
       displayNode.SetSliceIntersectionThickness(overlayThickness)
+      
+      # Force the display node to update
+      displayNode.Modified()
+
 
     if proxy2DImageNode.GetImageData().GetDataDimension() == 2:
       sliceWidget = self.getSliceWidget(layoutManager, proxy2DImageNode)
@@ -478,18 +574,71 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
         # Set the background volume for the current slice view
         sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
-
-        # Translate the 3D segmentation label map using the transform data
-        if proxyTransformNode is not None:
-          labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
         
         sliceNode.SetSliceVisible(True)
+        # Jump this slice view to the depth where the 2D image actually lives in RAS space.
+        # GetOrigin() returns the RAS position of voxel [0,0,0] — any point on the image plane
+        # has the same depth, so the origin is all we need.
+        origin = proxy2DImageNode.GetOrigin()
+        sliceNode.JumpSlice(origin[0], origin[1], origin[2])
 
       # Make the 3D segmentation visible in the 3D view
       tmpIdList = vtk.vtkIdList() # The nodes you want to display need to be in a vtkIdList
       tmpIdList.InsertNextId(segmentationLabelMapID)
       threeDViewNode = layoutManager.activeMRMLThreeDViewNode()
       shNode.ShowItemsInView(tmpIdList, threeDViewNode)
+
+
+      # Ensure 3D viewer properly reflects any color table changes
+      if threeDViewNode:
+        # Force update any volume rendering display nodes for the 3D view
+        labelMapNode = shNode.GetItemDataNode(segmentationLabelMapID)
+        if labelMapNode:
+          # Update the main display node
+          displayNode = labelMapNode.GetDisplayNode()
+          if displayNode:
+            displayNode.Modified()
+              
+            # UPDATE COLOUR
+            volumeRenderingLogic = slicer.modules.volumerendering.logic()
+            volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(labelMapNode)
+
+            if volumeRenderingDisplayNode is None:
+                volumeRenderingDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(labelMapNode)
+
+            # Toggle visibility to force Slicer to re-sync transfer functions from the updated color node
+            volumeRenderingDisplayNode.SetVisibility(False)
+            slicer.app.processEvents()
+            volumeRenderingDisplayNode.SetVisibility(True)
+
+            
+            # Force visibility update to trigger refresh
+            wasVisible = volumeRenderingDisplayNode.GetVisibility()
+            volumeRenderingDisplayNode.SetVisibility(False)
+            slicer.app.processEvents()
+            volumeRenderingDisplayNode.SetVisibility(wasVisible)
+            
+          # Update all display nodes including volume rendering
+          for displayNodeIndex in range(labelMapNode.GetNumberOfDisplayNodes()):
+            volumeDisplayNode = labelMapNode.GetNthDisplayNode(displayNodeIndex)
+            if volumeDisplayNode:
+              volumeDisplayNode.Modified()
+              if volumeDisplayNode.IsA("vtkMRMLVolumeRenderingDisplayNode"):
+                # Update volume rendering to reflect color changes
+                volumeProperty = volumeDisplayNode.GetVolumePropertyNode()
+                if volumeProperty:
+                  volumeProperty.Modified()
+          
+          # Force the label map node itself to update
+          labelMapNode.Modified()
+          
+          # Force 3D view to re-render
+          layoutManager = slicer.app.layoutManager()
+          if layoutManager:
+            for threeDViewIndex in range(layoutManager.threeDViewCount):
+              threeDWidget = layoutManager.threeDWidget(threeDViewIndex)
+              if threeDWidget and threeDWidget.threeDView():
+                threeDWidget.threeDView().forceRender()
 
       # If the sliceNode is now showing an image, fit the slice view to the current background image   
       if fitSlice:
@@ -508,28 +657,36 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         else:
           # Background exists, just replace the data to represent the next image in the sequence
           background.SetAndObserveImageData(proxy2DImageNode.GetImageData())
+          # Sync background node geometry to current frame
+          background.SetOrigin(proxy2DImageNode.GetOrigin())
+          background.SetSpacing(proxy2DImageNode.GetSpacing())
+          ijkToRASMatrix = vtk.vtkMatrix4x4()
+          proxy2DImageNode.GetIJKToRASDirectionMatrix(ijkToRASMatrix)
+          background.SetIJKToRASDirectionMatrix(ijkToRASMatrix)
           background.SetAttribute("Sequences.BaseName", proxy2DImageNode.GetAttribute("Sequences.BaseName"))
       
       # Add the image name to the slice view background variable
       if name is not None:
         currentSlice = getattr(self, name.lower() + 'Background')
         currentSlice.SetName(proxy2DImageNode.GetAttribute('Sequences.BaseName'))
-
-      # Set the background volumes for each orientation, if they exist
+      
+      # Update only the matching view for this frame's image.
+      # All other views are left untouched — they keep their last frame,
+      # which is what lets you see continuous motion in each orientation's view.
       for color in self.backgrounds:
+        compositeNode = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}")
         sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-        sliceViewWindow.cornerAnnotation().RemoveAllObservers()
-        currentSlice = getattr(self, color.lower() + 'Background')
-        sliceViewWindow.cornerAnnotation().ClearAllTexts()
-        # Add desired text to slice views that have a background node
-        if currentSlice is not None:
-          slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").SetBackgroundVolumeID(currentSlice.GetID())
-          imageFile = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume') is not None
-          if imageFile:
-            imageFileNameText = slicer.mrmlScene.GetNodeByID(f"vtkMRMLSliceCompositeNode{color}").GetNodeReference('backgroundVolume').GetAttribute('Sequences.BaseName')
-            # Place "Current Alignment" text in the slice view corner
-            sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
-            sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
+
+        if color == name:  # this is the view that owns this orientation
+          currentSlice = getattr(self, color.lower() + 'Background')
+          if currentSlice is not None:
+            compositeNode.SetBackgroundVolumeID(currentSlice.GetID())
+            compositeNode.SetLabelVolumeID(labelMapNode.GetID())
+            sliceViewWindow.cornerAnnotation().ClearAllTexts()
+            imageFileNameText = currentSlice.GetAttribute('Sequences.BaseName')
+            if imageFileNameText:
+              sliceViewWindow.cornerAnnotation().SetText(0, imageFileNameText)
+
       
       for color in self.backgrounds:
         sliceViewWindow = slicer.app.layoutManager().sliceWidget(color).sliceView()
@@ -543,12 +700,19 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         if sliceWidget is not None:
           sliceView = sliceWidget.sliceView()
           sliceView.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft, "Current Alignment")
-      # Enable alignment of the 3D segmentation label map according to the transform data so that
-      # the 3D segmentation label map overlays upon the ROI of the 2D images
-      if proxyTransformNode is not None:
-        labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
+      
+      self._applyTransformToLabelMap(
+          labelMapNode, transformType, proxyTransformNode,
+          sequenceBrowser, deformedMaskSequenceNode
+      )
+
 
       # Render changes
+      # Force display node to update first
+      displayNode = labelMapNode.GetDisplayNode()
+      if displayNode:
+        displayNode.Modified()
+      labelMapNode.Modified()
       slicer.util.forceRenderAllViews()
       slicer.app.processEvents()
 
@@ -583,9 +747,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           # Set the background volume for the current slice view
           sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
 
-          # Translate the 3D segmentation label map using the transform data
-          if proxyTransformNode is not None:
-            labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
+          self._applyTransformToLabelMap(
+              labelMapNode, transformType, proxyTransformNode,
+              sequenceBrowser, deformedMaskSequenceNode
+          )
+
           
           sliceNode.SetSliceVisible(True)
 
@@ -594,6 +760,58 @@ class TrackLogic(ScriptedLoadableModuleLogic):
         tmpIdList.InsertNextId(segmentationLabelMapID)
         threeDViewNode = layoutManager.activeMRMLThreeDViewNode()
         shNode.ShowItemsInView(tmpIdList, threeDViewNode)
+
+
+        # Ensure 3D viewer properly reflects any color table changes
+        if threeDViewNode:
+          # Force update any volume rendering display nodes for the 3D view
+          labelMapNode = shNode.GetItemDataNode(segmentationLabelMapID)
+          if labelMapNode:
+            # Update the main display node
+            displayNode = labelMapNode.GetDisplayNode()
+            if displayNode:
+              displayNode.Modified()
+              
+            # Force volume rendering to update colors
+            volumeRenderingLogic = slicer.modules.volumerendering.logic()
+            volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(labelMapNode)
+            
+            if volumeRenderingDisplayNode:
+              # Force volume rendering to refresh with new color table
+              volumeRenderingDisplayNode.Modified()
+              volumePropertyNode = volumeRenderingDisplayNode.GetVolumePropertyNode()
+              if volumePropertyNode:
+                volumePropertyNode.Modified()
+              
+              # Force visibility update to trigger refresh
+              wasVisible = volumeRenderingDisplayNode.GetVisibility()
+              volumeRenderingDisplayNode.SetVisibility(False)
+              slicer.app.processEvents()
+              volumeRenderingDisplayNode.SetVisibility(wasVisible)
+              
+            # Update all display nodes including volume rendering
+            for displayNodeIndex in range(labelMapNode.GetNumberOfDisplayNodes()):
+              volumeDisplayNode = labelMapNode.GetNthDisplayNode(displayNodeIndex)
+              if volumeDisplayNode:
+                volumeDisplayNode.Modified()
+                if volumeDisplayNode.IsA("vtkMRMLVolumeRenderingDisplayNode"):
+                  # Update volume rendering to reflect color changes
+                  volumeProperty = volumeDisplayNode.GetVolumePropertyNode()
+                  if volumeProperty:
+                    volumeProperty.Modified()
+            
+            # Force the label map node itself to update
+            labelMapNode.Modified()
+            
+            # Force 3D view to re-render
+            layoutManager = slicer.app.layoutManager()
+            if layoutManager:
+              for threeDViewIndex in range(layoutManager.threeDViewCount):
+                threeDWidget = layoutManager.threeDWidget(threeDViewIndex)
+                if threeDWidget and threeDWidget.threeDView():
+                  threeDWidget.threeDView().forceRender()
+
+
 
         # If the sliceNode is now showing an image, fit the slice view to the current background image   
         if fitSlice:
@@ -642,14 +860,139 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           if sliceViewWindow.cornerAnnotation().HasObserver(vtk.vtkCornerAnnotation.UpperLeft):
             sliceViewWindow.cornerAnnotation().RemoveAllObservers()
 
-        # Enable alignment of the 3D segmentation label map according to the transform data so that
-        # the 3D segmentation label map overlays upon the ROI of the 2D images
-        if proxyTransformNode is not None:
-          labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
-
         # Render changes
+        # Force display node to update first
+        displayNode = labelMapNode.GetDisplayNode()
+        if displayNode:
+          displayNode.Modified()
+        labelMapNode.Modified()
         slicer.util.forceRenderAllViews()
         slicer.app.processEvents()
+
+  def _applyTransformToLabelMap(self, labelMapNode, transformType,
+                               proxyTransformNode, sequenceBrowser,
+                               deformedMaskSequenceNode):
+    """
+    Applies the appropriate transform to the label map node depending on the
+    transform type selected by the user.
+    For Translation: links the label map to the current proxy transform node.
+    For Displacement Field: directly updates the label map's image data from
+    the current deformed mask proxy node, and clears any transform link.
+    """
+    if transformType == "Translation":
+        if proxyTransformNode is not None:
+            labelMapNode.SetAndObserveTransformNodeID(proxyTransformNode.GetID())
+    elif transformType == "Displacement Field":
+        if deformedMaskSequenceNode is not None:
+            proxyDeformedMaskNode = sequenceBrowser.GetProxyNode(deformedMaskSequenceNode)
+            if proxyDeformedMaskNode is not None:
+                labelMapNode.SetAndObserveImageData(proxyDeformedMaskNode.GetImageData())
+                labelMapNode.SetOrigin(proxyDeformedMaskNode.GetOrigin())
+                labelMapNode.SetSpacing(proxyDeformedMaskNode.GetSpacing())
+                ijkToRAS = vtk.vtkMatrix4x4()
+                proxyDeformedMaskNode.GetIJKToRASDirectionMatrix(ijkToRAS)
+                labelMapNode.SetIJKToRASDirectionMatrix(ijkToRAS)
+                labelMapNode.SetAndObserveTransformNodeID(None)
+
+  def visualizeImagesOnly(self, sequenceBrowser, sequenceNode2DImages):
+    """
+    Simplified visualization for cine images only — no segmentation, no transforms.
+    """
+    if sequenceBrowser is None or sequenceNode2DImages is None:
+        return
+    
+    layoutManager = slicer.app.layoutManager()
+    proxy2DImageNode = sequenceBrowser.GetProxyNode(sequenceNode2DImages)
+    if proxy2DImageNode is None:
+        return
+    
+    imageData = proxy2DImageNode.GetImageData()
+    if imageData is None:
+        return
+    
+     # Check if image is 2D or 3D and handle accordingly
+    if imageData.GetDataDimension() == 2:
+        # 2D image — show in the matching orientation view only
+        sliceWidget = self.getSliceWidget(layoutManager, proxy2DImageNode)
+        if sliceWidget is None:
+            return
+
+        sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+        name = sliceWidget.sliceViewName
+        volumesLogic = slicer.modules.volumes.logic()
+        background = getattr(self, name.lower() + 'Background')
+        if background is None:
+            newBackground = volumesLogic.CloneVolume(slicer.mrmlScene, proxy2DImageNode,
+                                    proxy2DImageNode.GetAttribute('Sequences.BaseName'))
+            setattr(self, name.lower() + 'Background', newBackground)
+            background = newBackground
+        else:
+            background.SetAndObserveImageData(imageData)
+            
+        sliceCompositeNode.SetBackgroundVolumeID(background.GetID())
+        sliceNode = sliceWidget.mrmlSliceNode()
+        origin = proxy2DImageNode.GetOrigin()
+        sliceNode.JumpSlice(origin[0], origin[1], origin[2])
+        sliceWidget.sliceLogic().FitSliceToAll()
+
+    else:
+        # 3D image — show in all slice views
+        for name in layoutManager.sliceViewNames():
+          sliceWidget = layoutManager.sliceWidget(name)
+          if sliceWidget is None:
+              continue
+          sliceCompositeNode = sliceWidget.mrmlSliceCompositeNode()
+          sliceCompositeNode.SetBackgroundVolumeID(proxy2DImageNode.GetID())
+          sliceWidget.sliceLogic().FitSliceToAll()
+
+    slicer.util.forceRenderAllViews()
+    slicer.app.processEvents()
+
+  def centerOnSeg(self, originalSegNode):
+    """
+    Centers all slice views on the centroid of the segmentation mask.
+    Call this after all visualization is complete.
+    """
+    try:
+        # Read the segmentation volume as a numpy array
+        labelArray = arrayFromVolume(originalSegNode)
+        # Pick which structure to center on: the label with the most voxels.
+        # Averaging across ALL labels lands the point in the gap between separate
+        # structures, so we isolate one structure first.
+        labels = np.unique(labelArray)
+        labels = labels[labels != 0]          # drop background
+        if len(labels) == 0:
+            print("centerOnSeg: no non-zero voxels found, skipping.")
+            return
+
+        largestLabel = None
+        largestCount = 0
+        for label in labels:
+            count = np.count_nonzero(labelArray == label)
+            if count > largestCount:
+                largestCount = count
+                largestLabel = label
+
+        # Centroid of ONLY the largest structure's voxels
+        nonZeroIndices = np.argwhere(labelArray == largestLabel)
+        centerIJK = nonZeroIndices.mean(axis=0)
+        i, j, k = np.round(centerIJK).astype(int)
+
+        # Get the matrix that converts IJK voxel coordinates to RAS world coordinates
+        # RAS is the coordinate system Slicer uses for physical space (in mm)
+        ijkToRAS = vtk.vtkMatrix4x4()
+        originalSegNode.GetIJKToRASMatrix(ijkToRAS)
+        ijkPoint = [centerIJK[2], centerIJK[1], centerIJK[0], 1]
+        rasPoint = ijkToRAS.MultiplyPoint(ijkPoint)
+
+        # Move all slice views to the computed RAS point
+        layoutManager = slicer.app.layoutManager()
+        for name in layoutManager.sliceViewNames():
+            sliceNode = slicer.mrmlScene.GetNodeByID(f'vtkMRMLSliceNode{name}')
+            sliceNode.JumpSlice(rasPoint[0], rasPoint[1], rasPoint[2])
+
+    except Exception as e:
+        print(f"centerOnSeg failed: {e}")
   
   def getSliceWidget(self, layoutManager, imageNode):
     """
@@ -681,7 +1024,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
 
     def reorient_image(image, orientation):
       """
-      Helper function for fixing images oritentation.
+      Helper function for fixing images orientation.
       Reorient the image based on the anatomical orientation.
       """
       if image.GetSize()[0] == 1:
@@ -720,8 +1063,10 @@ class TrackLogic(ScriptedLoadableModuleLogic):
       elif scanOrder == "IS" or scanOrder == "SI":
         imageOrientation = "Axial"
       else:
-        print(f"Error: Unexpected image scan order {scanOrder}.")
-        exit(1)
+        slicer.util.warningDisplay(
+          f"Unexpected image scan order '{scanOrder}'. The image could not be displayed.",
+          "Orientation Error")
+        return None
 
       # Find the slice widget that has the same orientation as the image
       sliceWidget = None
@@ -730,8 +1075,11 @@ class TrackLogic(ScriptedLoadableModuleLogic):
           sliceWidget = layoutManager.sliceWidget(name)
 
       if not sliceWidget:
-        print(f"Error: A slice with the {imageOrientation} orientation was not found.")
-        exit(1)
+        slicer.util.warningDisplay(
+          f"No slice view with the {imageOrientation} orientation was found. "
+          f"The image could not be displayed.",
+          "Orientation Error")
+        return None
 
       return sliceWidget
 
@@ -744,9 +1092,7 @@ class TrackLogic(ScriptedLoadableModuleLogic):
     """
     sliceWidgets = []
     for name in layoutManager.sliceViewNames():
-      if layoutManager.sliceWidget(name).sliceOrientation == "Axial" or layoutManager.sliceWidget(name).sliceOrientation == "Sagittal" or layoutManager.sliceWidget(name).sliceOrientation == "Coronal":
-        sliceWidgets.append(layoutManager.sliceWidget(name))
-      else:
-        print(f"Error: A slice with the required orientations was not found.")
-        exit(1)
+        widget = layoutManager.sliceWidget(name)
+        if widget.sliceOrientation in ("Axial", "Sagittal", "Coronal"):
+            sliceWidgets.append(widget)
     return sliceWidgets
